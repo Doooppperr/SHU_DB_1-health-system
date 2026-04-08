@@ -48,6 +48,11 @@
             />
           </template>
         </el-table-column>
+        <el-table-column label="操作" width="100" fixed="right">
+          <template #default="scope">
+            <el-button type="danger" link @click="removeComment(scope.row)">删除</el-button>
+          </template>
+        </el-table-column>
       </el-table>
     </el-card>
   </div>
@@ -55,15 +60,10 @@
 
 <script setup>
 import { onMounted, ref } from "vue";
-import { ElMessage } from "element-plus";
-import { useRouter } from "vue-router";
+import { ElMessage, ElMessageBox } from "element-plus";
 
 import MainNavActions from "../components/MainNavActions.vue";
-import { fetchCommentModerationList, updateCommentVisibility } from "../api/comments";
-import { useAuthStore } from "../stores/auth";
-
-const router = useRouter();
-const authStore = useAuthStore();
+import { deleteComment, fetchCommentModerationList, updateCommentVisibility } from "../api/comments";
 
 const loading = ref(false);
 const comments = ref([]);
@@ -101,25 +101,23 @@ const toggleVisibility = async (row, isVisible) => {
   }
 };
 
-const goInstitutions = () => {
-  router.push({ name: "institutions" });
-};
+const removeComment = async (row) => {
+  try {
+    await ElMessageBox.confirm("删除后不可恢复，确认删除该评论？", "提示", {
+      type: "warning",
+      confirmButtonText: "确认删除",
+      cancelButtonText: "取消",
+    });
 
-const goRecords = () => {
-  router.push({ name: "records" });
-};
-
-const goTrends = () => {
-  router.push({ name: "trends" });
-};
-
-const goProfile = () => {
-  router.push({ name: "profile" });
-};
-
-const logout = () => {
-  authStore.logout();
-  router.push({ name: "login" });
+    await deleteComment(row.id);
+    ElMessage.success("评论已删除");
+    await loadComments();
+  } catch (error) {
+    if (error === "cancel") {
+      return;
+    }
+    ElMessage.error(error?.response?.data?.message || "评论删除失败");
+  }
 };
 
 onMounted(async () => {

@@ -96,6 +96,12 @@ def test_comment_moderation_flow(client, app):
     )
     assert any(item["id"] == comment_id for item in public_after_visible.get_json()["items"])
 
+    delete_response = client.delete(f"/api/comments/{comment_id}", headers=admin_headers)
+    assert delete_response.status_code == 200
+
+    moderation_after_delete = client.get("/api/comments/moderation", headers=admin_headers)
+    assert all(item["id"] != comment_id for item in moderation_after_delete.get_json()["items"])
+
     non_admin_moderation = client.get("/api/comments/moderation", headers=user_headers)
     assert non_admin_moderation.status_code == 403
 

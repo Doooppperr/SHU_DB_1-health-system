@@ -28,6 +28,14 @@ def _current_user_id() -> int:
     return int(get_jwt_identity())
 
 
+def _current_user():
+    return db.session.get(User, _current_user_id())
+
+
+def _is_admin(user: User | None) -> bool:
+    return user is not None and user.role == "admin"
+
+
 def _parse_exam_date(raw_value: str):
     try:
         return date.fromisoformat(raw_value)
@@ -56,22 +64,25 @@ def _parse_owner_id(raw_owner_id, current_user_id: int):
     return owner_id, None
 
 
-def _get_manageable_owner_ids(user_id: int):
-    relation_rows = FriendRelation.query.filter_by(user_id=user_id, auth_status=True).all()
-    owner_ids = [user_id]
+def _get_manageable_owner_ids(user: User):
+    if _is_admin(user):
+        return [item.id for item in User.query.order_by(User.id.asc()).all()]
+
+    relation_rows = FriendRelation.query.filter_by(user_id=user.id, auth_status=True).all()
+    owner_ids = [user.id]
     owner_ids.extend(item.friend_user_id for item in relation_rows)
     return list(dict.fromkeys(owner_ids))
 
 
-def _validate_owner_manage_permission(manager_user_id: int, owner_id: int):
+def _validate_owner_manage_permission(manager_user: User, owner_id: int):
     owner_user = db.session.get(User, owner_id)
     if owner_user is None:
         return {"message": "owner user not found"}, 404
 
-    if manager_user_id == owner_id:
+    if _is_admin(manager_user) or manager_user.id == owner_id:
         return None, None
 
-    relation = FriendRelation.query.filter_by(user_id=manager_user_id, friend_user_id=owner_id).first()
+    relation = FriendRelation.query.filter_by(user_id=manager_user.id, friend_user_id=owner_id).first()
     if relation is None:
         return {"message": "friend relation not found"}, 403
 
@@ -81,24 +92,24 @@ def _validate_owner_manage_permission(manager_user_id: int, owner_id: int):
     return None, None
 
 
-def _can_manage_owner(user_id: int, owner_id: int) -> bool:
-    if user_id == owner_id:
+def _can_manage_owner(user: User, owner_id: int) -> bool:
+    if _is_admin(user) or user.id == owner_id:
         return True
 
     relation = FriendRelation.query.filter_by(
-        user_id=user_id,
+        user_id=user.id,
         friend_user_id=owner_id,
         auth_status=True,
     ).first()
     return relation is not None
 
 
-def _get_accessible_record(record_id: int, user_id: int):
+def _get_accessible_record(record_id: int, user: User):
     record = db.session.get(HealthRecord, record_id)
     if record is None:
         return None
 
-    if not _can_manage_owner(user_id, record.owner_id):
+    if not _can_manage_owner(user, record.owner_id):
         return None
 
     return record
@@ -143,8 +154,11 @@ def _validate_institution_package(institution_id, package_id):
 @records_bp.get("")
 @jwt_required()
 def list_records():
-    user_id = _current_user_id()
-    owner_ids = _get_manageable_owner_ids(user_id)
+    user = _current_user()
+    if user is None:
+        return {"message": "user not found"}, 404
+
+    owner_ids = _get_manageable_owner_ids(user)
     records = (
         HealthRecord.query.filter(HealthRecord.owner_id.in_(owner_ids))
         .order_by(HealthRecord.exam_date.desc(), HealthRecord.id.desc())
@@ -155,7 +169,7 @@ def list_records():
     items = []
     for record in records:
         payload = record.to_dict(include_indicators=False)
-        payload["is_owner"] = record.owner_id == user_id
+        payload["is_owner"] = record.owner_id == user.id
         payload["can_manage"] = record.owner_id in manageable_set
         items.append(payload)
 
@@ -165,18 +179,21 @@ def list_records():
 @records_bp.post("")
 @jwt_required()
 def create_record():
-    user_id = _current_user_id()
+    user = _current_user()
+    if user is None:
+        return {"message": "user not found"}, 404
+
     payload = request.get_json(silent=True) or {}
 
     exam_date = _parse_exam_date(payload.get("exam_date"))
     if exam_date is None:
         return {"message": "exam_date is required and must be ISO date (YYYY-MM-DD)"}, 400
 
-    owner_id, owner_parse_error = _parse_owner_id(payload.get("owner_id"), user_id)
+    owner_id, owner_parse_error = _parse_owner_id(payload.get("owner_id"), user.id)
     if owner_parse_error:
         return owner_parse_error, 400
 
-    owner_error_payload, owner_error_status = _validate_owner_manage_permission(user_id, owner_id)
+    owner_error_payload, owner_error_status = _validate_owner_manage_permission(user, owner_id)
     if owner_error_payload:
         return owner_error_payload, owner_error_status
 
@@ -193,7 +210,7 @@ def create_record():
 
     record = HealthRecord(
         owner_id=owner_id,
-        uploader_id=user_id,
+        uploader_id=user.id,
         institution_id=institution.id if institution else None,
         package_id=package.id if package else None,
         exam_date=exam_date,
@@ -209,7 +226,10 @@ def create_record():
 @records_bp.post("/upload")
 @jwt_required()
 def upload_record_and_parse():
-    user_id = _current_user_id()
+    user = _current_user()
+    if user is None:
+        return {"message": "user not found"}, 404
+
     uploaded_file = request.files.get("file")
 
     if uploaded_file is None or not uploaded_file.filename:
@@ -223,11 +243,11 @@ def upload_record_and_parse():
     if exam_date is None:
         return {"message": "exam_date is required and must be ISO date (YYYY-MM-DD)"}, 400
 
-    owner_id, owner_parse_error = _parse_owner_id(request.form.get("owner_id"), user_id)
+    owner_id, owner_parse_error = _parse_owner_id(request.form.get("owner_id"), user.id)
     if owner_parse_error:
         return owner_parse_error, 400
 
-    owner_error_payload, owner_error_status = _validate_owner_manage_permission(user_id, owner_id)
+    owner_error_payload, owner_error_status = _validate_owner_manage_permission(user, owner_id)
     if owner_error_payload:
         return owner_error_payload, owner_error_status
 
@@ -254,7 +274,7 @@ def upload_record_and_parse():
 
     record = HealthRecord(
         owner_id=owner_id,
-        uploader_id=user_id,
+        uploader_id=user.id,
         institution_id=institution.id if institution else None,
         package_id=package.id if package else None,
         exam_date=exam_date,
@@ -294,8 +314,11 @@ def upload_record_and_parse():
 @records_bp.put("/<int:record_id>/confirm")
 @jwt_required()
 def confirm_record(record_id: int):
-    user_id = _current_user_id()
-    record = _get_accessible_record(record_id, user_id)
+    user = _current_user()
+    if user is None:
+        return {"message": "user not found"}, 404
+
+    record = _get_accessible_record(record_id, user)
     if record is None:
         return {"message": "record not found"}, 404
 
@@ -314,19 +337,91 @@ def confirm_record(record_id: int):
 @records_bp.get("/<int:record_id>")
 @jwt_required()
 def get_record_detail(record_id: int):
-    user_id = _current_user_id()
-    record = _get_accessible_record(record_id, user_id)
+    user = _current_user()
+    if user is None:
+        return {"message": "user not found"}, 404
+
+    record = _get_accessible_record(record_id, user)
     if record is None:
         return {"message": "record not found"}, 404
 
     return {"item": record.to_dict(include_indicators=True)}, 200
 
 
+@records_bp.put("/<int:record_id>")
+@jwt_required()
+def update_record(record_id: int):
+    user = _current_user()
+    if user is None:
+        return {"message": "user not found"}, 404
+
+    record = _get_accessible_record(record_id, user)
+    if record is None:
+        return {"message": "record not found"}, 404
+
+    payload = request.get_json(silent=True) or {}
+
+    if "exam_date" in payload:
+        exam_date = _parse_exam_date(payload.get("exam_date"))
+        if exam_date is None:
+            return {"message": "exam_date must be ISO date (YYYY-MM-DD)"}, 400
+        record.exam_date = exam_date
+
+    if "owner_id" in payload:
+        owner_id = _parse_optional_int(payload.get("owner_id"))
+        if owner_id is None:
+            return {"message": "owner_id must be integer"}, 400
+        owner_error_payload, owner_error_status = _validate_owner_manage_permission(user, owner_id)
+        if owner_error_payload:
+            return owner_error_payload, owner_error_status
+        record.owner_id = owner_id
+
+    institution_id = record.institution_id
+    package_id = record.package_id
+
+    if "institution_id" in payload:
+        raw_institution_id = payload.get("institution_id")
+        if raw_institution_id in {None, ""}:
+            institution_id = None
+        else:
+            institution_id = _parse_optional_int(raw_institution_id)
+            if institution_id is None:
+                return {"message": "institution_id must be integer"}, 400
+
+    if "package_id" in payload:
+        raw_package_id = payload.get("package_id")
+        if raw_package_id in {None, ""}:
+            package_id = None
+        else:
+            package_id = _parse_optional_int(raw_package_id)
+            if package_id is None:
+                return {"message": "package_id must be integer"}, 400
+
+    institution, package, error_payload, error_status = _validate_institution_package(institution_id, package_id)
+    if error_payload:
+        return error_payload, error_status
+
+    record.institution_id = institution.id if institution else None
+    record.package_id = package.id if package else None
+
+    if "status" in payload:
+        status = payload.get("status")
+        if status not in {"draft", "parsed", "confirmed"}:
+            return {"message": "invalid status"}, 400
+        record.status = status
+
+    db.session.commit()
+    return {"item": record.to_dict(include_indicators=True)}, 200
+
+
 @records_bp.delete("/<int:record_id>")
 @jwt_required()
 def delete_record(record_id: int):
-    user_id = _current_user_id()
-    record = _get_accessible_record(record_id, user_id)
+    user = _current_user()
+    if user is None:
+        return {"message": "user not found"}, 404
+
+    record = _get_accessible_record(record_id, user)
     if record is None:
         return {"message": "record not found"}, 404
 
@@ -338,8 +433,11 @@ def delete_record(record_id: int):
 @records_bp.post("/<int:record_id>/indicators")
 @jwt_required()
 def add_record_indicator(record_id: int):
-    user_id = _current_user_id()
-    record = _get_accessible_record(record_id, user_id)
+    user = _current_user()
+    if user is None:
+        return {"message": "user not found"}, 404
+
+    record = _get_accessible_record(record_id, user)
     if record is None:
         return {"message": "record not found"}, 404
 
@@ -374,8 +472,11 @@ def add_record_indicator(record_id: int):
 @records_bp.put("/<int:record_id>/indicators/<int:indicator_id>")
 @jwt_required()
 def update_record_indicator(record_id: int, indicator_id: int):
-    user_id = _current_user_id()
-    record = _get_accessible_record(record_id, user_id)
+    user = _current_user()
+    if user is None:
+        return {"message": "user not found"}, 404
+
+    record = _get_accessible_record(record_id, user)
     if record is None:
         return {"message": "record not found"}, 404
 
@@ -415,8 +516,11 @@ def update_record_indicator(record_id: int, indicator_id: int):
 @records_bp.delete("/<int:record_id>/indicators/<int:indicator_id>")
 @jwt_required()
 def delete_record_indicator(record_id: int, indicator_id: int):
-    user_id = _current_user_id()
-    record = _get_accessible_record(record_id, user_id)
+    user = _current_user()
+    if user is None:
+        return {"message": "user not found"}, 404
+
+    record = _get_accessible_record(record_id, user)
     if record is None:
         return {"message": "record not found"}, 404
 

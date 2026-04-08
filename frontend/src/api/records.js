@@ -24,6 +24,10 @@ export function fetchRecordDetail(recordId) {
   return http.get(`/records/${recordId}`);
 }
 
+export function updateRecord(recordId, payload) {
+  return http.put(`/records/${recordId}`, payload);
+}
+
 export function deleteRecord(recordId) {
   return http.delete(`/records/${recordId}`);
 }

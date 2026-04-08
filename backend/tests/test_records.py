@@ -1,3 +1,7 @@
+from app.extensions import db
+from app.models import User
+
+
 def _auth_headers(client, username):
     client.post(
         "/api/auth/register",
@@ -200,3 +204,73 @@ def test_friend_proxy_record_authorization_chain(client):
 
     detail_after_revoke = client.get(f"/api/records/{record_id}", headers=manager_headers)
     assert detail_after_revoke.status_code == 404
+
+
+def test_admin_can_crud_other_users_records(client, app):
+    owner_headers = _auth_headers(client, "record_owner_admin_scope")
+    admin_headers = _auth_headers(client, "record_admin_scope")
+
+    with app.app_context():
+        admin = User.query.filter_by(username="record_admin_scope").first()
+        admin.role = "admin"
+        db.session.commit()
+
+    owner_login = client.post(
+        "/api/auth/login",
+        json={"username": "record_owner_admin_scope", "password": "secret123"},
+    )
+    owner_user_id = owner_login.get_json()["user"]["id"]
+
+    institution_id, package_id = _first_institution_and_package(client, admin_headers)
+
+    create_by_admin = client.post(
+        "/api/records",
+        headers=admin_headers,
+        json={
+            "owner_id": owner_user_id,
+            "exam_date": "2026-04-08",
+            "institution_id": institution_id,
+            "package_id": package_id,
+            "status": "confirmed",
+        },
+    )
+    assert create_by_admin.status_code == 201
+    record_id = create_by_admin.get_json()["item"]["id"]
+    assert create_by_admin.get_json()["item"]["owner_id"] == owner_user_id
+
+    admin_list = client.get("/api/records", headers=admin_headers)
+    assert admin_list.status_code == 200
+    assert any(item["id"] == record_id for item in admin_list.get_json()["items"])
+
+    admin_detail = client.get(f"/api/records/{record_id}", headers=admin_headers)
+    assert admin_detail.status_code == 200
+
+    dicts = client.get("/api/indicators/dicts", headers=admin_headers).get_json()["items"]
+    fbg = next(item for item in dicts if item["code"] == "FBG")
+
+    add_indicator = client.post(
+        f"/api/records/{record_id}/indicators",
+        headers=admin_headers,
+        json={"indicator_dict_id": fbg["id"], "value": "6.1"},
+    )
+    assert add_indicator.status_code == 201
+    indicator_id = add_indicator.get_json()["item"]["id"]
+
+    update_indicator = client.put(
+        f"/api/records/{record_id}/indicators/{indicator_id}",
+        headers=admin_headers,
+        json={"value": "5.8"},
+    )
+    assert update_indicator.status_code == 200
+
+    delete_indicator = client.delete(
+        f"/api/records/{record_id}/indicators/{indicator_id}",
+        headers=admin_headers,
+    )
+    assert delete_indicator.status_code == 200
+
+    delete_record = client.delete(f"/api/records/{record_id}", headers=admin_headers)
+    assert delete_record.status_code == 200
+
+    owner_detail_after_delete = client.get(f"/api/records/{record_id}", headers=owner_headers)
+    assert owner_detail_after_delete.status_code == 404

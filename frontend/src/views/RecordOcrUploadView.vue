@@ -150,6 +150,7 @@ import MainNavActions from "../components/MainNavActions.vue";
 import { fetchFriends } from "../api/friends";
 import { fetchInstitutions, fetchInstitutionPackages } from "../api/institutions";
 import { confirmRecord, uploadRecordByOcr } from "../api/records";
+import { fetchUsers } from "../api/users";
 import { useAuthStore } from "../stores/auth";
 
 const router = useRouter();
@@ -158,6 +159,7 @@ const authStore = useAuthStore();
 const institutions = ref([]);
 const packageMap = ref({});
 const manageableFriends = ref([]);
+const adminUsers = ref([]);
 const selectedFile = ref(null);
 const fileList = ref([]);
 
@@ -181,6 +183,13 @@ const currentPackages = computed(() => {
 });
 
 const ownerOptions = computed(() => {
+  if (authStore.user?.role === "admin") {
+    return adminUsers.value.map((user) => ({
+      id: user.id,
+      label: user.role === "admin" ? `${user.username}（管理员）` : `${user.username}（用户）`,
+    }));
+  }
+
   const selfUser = authStore.user
     ? [{ id: authStore.user.id, label: `${authStore.user.username}（本人）` }]
     : [];
@@ -201,6 +210,11 @@ const loadInstitutions = async () => {
 const loadFriends = async () => {
   const { data } = await fetchFriends();
   manageableFriends.value = data.manageable || [];
+};
+
+const loadAdminUsers = async () => {
+  const { data } = await fetchUsers();
+  adminUsers.value = data.items || [];
 };
 
 const loadPackages = async (institutionId) => {
@@ -323,7 +337,8 @@ onMounted(async () => {
       await authStore.fetchMe();
     }
     form.owner_id = authStore.user?.id || null;
-    await Promise.all([loadInstitutions(), loadFriends()]);
+    const ownerLoader = authStore.user?.role === "admin" ? loadAdminUsers() : loadFriends();
+    await Promise.all([loadInstitutions(), ownerLoader]);
   } catch (error) {
     errorMessage.value = error?.response?.data?.message || "页面初始化失败";
   }
