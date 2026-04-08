@@ -1,0 +1,14 @@
+Flask==3.1.0
+Flask-Cors==5.0.0
+Flask-JWT-Extended==4.6.0
+Flask-Migrate==4.0.7
+Flask-SQLAlchemy==3.1.1
+SQLAlchemy==2.0.36
+alembic==1.14.0
+bcrypt==4.2.1
+python-dotenv==1.0.1
+pytest==8.3.4
+requests==2.32.3
+huaweicloudsdkcore==3.1.122
+PyMuPDF==1.26.3
+waitress==3.0.2
