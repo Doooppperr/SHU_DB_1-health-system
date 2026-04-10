@@ -23,6 +23,7 @@ class Config:
     HUAWEI_PROJECT_ID = os.getenv("HUAWEI_PROJECT_ID", "")
     OCR_API_PATH = os.getenv("OCR_API_PATH", "/v2/{project_id}/ocr/general-table")
     OCR_PDF_MAX_PAGES = int(os.getenv("OCR_PDF_MAX_PAGES", "8"))
+    OCR_AUTO_CONFIRM_MIN_SCORE = float(os.getenv("OCR_AUTO_CONFIRM_MIN_SCORE", "0.92"))
 
     UPLOAD_DIR = os.getenv("UPLOAD_DIR", os.path.join(os.getcwd(), "uploads"))
     UPLOAD_URL_BASE = os.getenv("UPLOAD_URL_BASE", "/uploads")

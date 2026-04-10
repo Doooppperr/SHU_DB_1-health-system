@@ -16,7 +16,10 @@ export function uploadRecordByOcr(formData) {
   });
 }
 
-export function confirmRecord(recordId) {
+export function confirmRecord(recordId, payload = null) {
+  if (payload) {
+    return http.put(`/records/${recordId}/confirm`, payload);
+  }
   return http.put(`/records/${recordId}/confirm`);
 }
 

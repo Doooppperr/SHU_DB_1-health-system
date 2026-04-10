@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
@@ -22,6 +23,7 @@ from app.services.ocr import mapping_service
 
 
 ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
+NUMERIC_VALUE_PATTERN = re.compile(r"[-+]?\d+(?:\.\d+)?")
 
 
 def _current_user_id() -> int:
@@ -119,9 +121,8 @@ def _evaluate_is_abnormal(indicator_dict: IndicatorDict, value: str) -> bool:
     if indicator_dict.value_type != "numeric":
         return False
 
-    try:
-        numeric_value = Decimal(str(value).strip())
-    except (InvalidOperation, ValueError):
+    numeric_value = _extract_numeric_value(value)
+    if numeric_value is None:
         return False
 
     if indicator_dict.reference_low is not None and numeric_value < indicator_dict.reference_low:
@@ -131,6 +132,30 @@ def _evaluate_is_abnormal(indicator_dict: IndicatorDict, value: str) -> bool:
         return True
 
     return False
+
+
+def _extract_numeric_value(raw_value):
+    if raw_value is None:
+        return None
+
+    text = str(raw_value).strip()
+    if not text:
+        return None
+
+    compact = text.replace(",", "")
+    try:
+        return Decimal(compact)
+    except (InvalidOperation, ValueError):
+        pass
+
+    match = NUMERIC_VALUE_PATTERN.search(compact)
+    if match is None:
+        return None
+
+    try:
+        return Decimal(match.group(0))
+    except (InvalidOperation, ValueError):
+        return None
 
 
 def _validate_institution_package(institution_id, package_id):
@@ -149,6 +174,149 @@ def _validate_institution_package(institution_id, package_id):
         institution = db.session.get(Institution, package.institution_id)
 
     return institution, package, None, None
+
+
+def _build_ocr_snapshot(ocr_result: dict, mapping: dict):
+    return {
+        "engine": ocr_result.get("engine", "unknown"),
+        "raw_text": ocr_result.get("raw_text"),
+        "fields": ocr_result.get("fields", []),
+        "meta": ocr_result.get("meta", {}),
+        "mapping": {
+            "candidate_mappings": mapping.get("candidate_mappings", []),
+            "unmatched": mapping.get("unmatched", []),
+            "filtered": mapping.get("filtered", []),
+            "diagnostics": mapping.get("diagnostics", {}),
+        },
+    }
+
+
+def _load_ocr_snapshot(record: HealthRecord):
+    if not record.ocr_raw_text:
+        return {}
+
+    try:
+        payload = json.loads(record.ocr_raw_text)
+        return payload if isinstance(payload, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def _normalize_confirmed_mappings(raw_confirmed_mappings):
+    if raw_confirmed_mappings is None:
+        return None
+
+    if not isinstance(raw_confirmed_mappings, list):
+        raise ValueError("confirmed_mappings must be a list")
+
+    deduped = {}
+    for item in raw_confirmed_mappings:
+        if not isinstance(item, dict):
+            continue
+
+        if item.get("ignored"):
+            continue
+
+        indicator_dict_id = _parse_optional_int(item.get("indicator_dict_id"))
+        value = item.get("value")
+        if indicator_dict_id is None or value is None or str(value).strip() == "":
+            continue
+
+        deduped[indicator_dict_id] = {
+            "indicator_dict_id": indicator_dict_id,
+            "value": str(value).strip(),
+            "score": float(item.get("score", 1.0) or 1.0),
+        }
+
+    return list(deduped.values())
+
+
+def _resolve_auto_confirmed_mappings(record: HealthRecord):
+    snapshot = _load_ocr_snapshot(record)
+    mapping_payload = snapshot.get("mapping") or {}
+    candidate_mappings = mapping_payload.get("candidate_mappings") or []
+
+    try:
+        threshold = float(current_app.config.get("OCR_AUTO_CONFIRM_MIN_SCORE", 0.92))
+    except (TypeError, ValueError):
+        threshold = 0.92
+
+    best_by_indicator = {}
+    for candidate in candidate_mappings:
+        if not isinstance(candidate, dict):
+            continue
+
+        indicator_dict_id = _parse_optional_int(candidate.get("indicator_dict_id"))
+        value = candidate.get("value")
+
+        try:
+            score = float(candidate.get("score", 0) or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+
+        if indicator_dict_id is None or value is None or str(value).strip() == "":
+            continue
+        if score < threshold:
+            continue
+
+        current = best_by_indicator.get(indicator_dict_id)
+        if current is None or score > current["score"]:
+            best_by_indicator[indicator_dict_id] = {
+                "indicator_dict_id": indicator_dict_id,
+                "value": str(value).strip(),
+                "score": score,
+            }
+
+    return list(best_by_indicator.values()), threshold
+
+
+def _upsert_ocr_indicators(record: HealthRecord, confirmed_mappings):
+    if not confirmed_mappings:
+        return 0, []
+
+    indicator_ids = list({item["indicator_dict_id"] for item in confirmed_mappings})
+    dict_rows = IndicatorDict.query.filter(IndicatorDict.id.in_(indicator_ids)).all()
+    dict_map = {item.id: item for item in dict_rows}
+
+    invalid_ids = [item_id for item_id in indicator_ids if item_id not in dict_map]
+
+    existing_rows = HealthIndicator.query.filter(
+        HealthIndicator.record_id == record.id,
+        HealthIndicator.indicator_dict_id.in_(indicator_ids),
+    ).all()
+    existing_map = {item.indicator_dict_id: item for item in existing_rows}
+
+    changed_count = 0
+
+    for mapping in confirmed_mappings:
+        indicator_dict_id = mapping["indicator_dict_id"]
+        indicator_dict = dict_map.get(indicator_dict_id)
+        if indicator_dict is None:
+            continue
+
+        value = str(mapping["value"]).strip()
+        is_abnormal = _evaluate_is_abnormal(indicator_dict, value)
+
+        existing = existing_map.get(indicator_dict_id)
+        if existing is not None:
+            existing.value = value
+            existing.is_abnormal = is_abnormal
+            existing.source = "ocr"
+            changed_count += 1
+            continue
+
+        db.session.add(
+            HealthIndicator(
+                record_id=record.id,
+                indicator_dict_id=indicator_dict_id,
+                value=value,
+                is_abnormal=is_abnormal,
+                source="ocr",
+            )
+        )
+        changed_count += 1
+
+    return changed_count, invalid_ids
 
 
 @records_bp.get("")
@@ -270,7 +438,24 @@ def upload_record_and_parse():
         return {"message": f"ocr parse failed: {exc}"}, 500
 
     indicator_dicts = IndicatorDict.query.all()
+    if not indicator_dicts:
+        current_app.logger.warning("indicator_dicts is empty before OCR mapping, trying seed_indicator_dicts")
+        try:
+            from app.seed import seed_indicator_dicts
+
+            seed_indicator_dicts()
+            indicator_dicts = IndicatorDict.query.all()
+        except Exception as exc:
+            current_app.logger.exception("seed_indicator_dicts failed: %s", exc)
+
+    if not indicator_dicts:
+        storage.delete(saved_file["key"])
+        return {
+            "message": "indicator dictionary is empty, please initialize seed data and retry",
+        }, 503
+
     mapping = mapping_service.map_fields(ocr_result.get("fields", []), indicator_dicts)
+    ocr_snapshot = _build_ocr_snapshot(ocr_result, mapping)
 
     record = HealthRecord(
         owner_id=owner_id,
@@ -279,24 +464,10 @@ def upload_record_and_parse():
         package_id=package.id if package else None,
         exam_date=exam_date,
         report_file_url=saved_file["url"],
-        ocr_raw_text=json.dumps(ocr_result, ensure_ascii=False),
+        ocr_raw_text=json.dumps(ocr_snapshot, ensure_ascii=False),
         status="parsed",
     )
     db.session.add(record)
-    db.session.flush()
-
-    for item in mapping["mapped"]:
-        indicator_dict = item["indicator_dict"]
-        value = item["value"]
-
-        indicator = HealthIndicator(
-            record_id=record.id,
-            indicator_dict_id=indicator_dict.id,
-            value=value,
-            is_abnormal=_evaluate_is_abnormal(indicator_dict, value),
-            source="ocr",
-        )
-        db.session.add(indicator)
 
     db.session.commit()
 
@@ -307,6 +478,10 @@ def upload_record_and_parse():
             "mapped_count": len(mapping["mapped"]),
             "unmatched_count": len(mapping["unmatched"]),
             "unmatched_fields": mapping["unmatched"],
+            "filtered_count": len(mapping.get("filtered", [])),
+            "filtered_fields": mapping.get("filtered", []),
+            "candidate_mappings": mapping.get("candidate_mappings", []),
+            "diagnostics": mapping.get("diagnostics", {}),
         },
     }, 201
 
@@ -328,10 +503,41 @@ def confirm_record(record_id: int):
     if record.status not in {"draft", "parsed"}:
         return {"message": "record status cannot be confirmed"}, 400
 
+    payload = request.get_json(silent=True) or {}
+    raw_confirmed_mappings = payload.get("confirmed_mappings") if isinstance(payload, dict) else None
+
+    try:
+        confirmed_mappings = _normalize_confirmed_mappings(raw_confirmed_mappings)
+    except ValueError as exc:
+        return {"message": str(exc)}, 400
+
+    if confirmed_mappings is None:
+        confirmed_mappings, auto_threshold = _resolve_auto_confirmed_mappings(record)
+        confirm_source = "auto_high_confidence"
+    else:
+        auto_threshold = None
+        confirm_source = "manual_selection"
+
+    changed_count, invalid_ids = _upsert_ocr_indicators(record, confirmed_mappings)
+    if invalid_ids and raw_confirmed_mappings is not None:
+        db.session.rollback()
+        return {"message": "some indicator_dict_id are invalid", "invalid_indicator_dict_ids": invalid_ids}, 400
+
     record.status = "confirmed"
     db.session.commit()
 
-    return {"item": record.to_dict(include_indicators=True), "message": "record confirmed"}, 200
+    response_payload = {
+        "item": record.to_dict(include_indicators=True),
+        "message": "record confirmed",
+        "ocr": {
+            "confirm_source": confirm_source,
+            "confirmed_count": changed_count,
+        },
+    }
+    if auto_threshold is not None:
+        response_payload["ocr"]["auto_threshold"] = auto_threshold
+
+    return response_payload, 200
 
 
 @records_bp.get("/<int:record_id>")

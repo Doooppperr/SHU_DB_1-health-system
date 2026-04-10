@@ -415,4 +415,59 @@
 - 部署与演示准备已完成，可直接进入答辩演示阶段。
 
 
+## 轮次 7：OCR鲁棒入档改造（多来源 + 人工确认入档）
+
+- 状态：`Closed`
+- 日期：2026-04-10
+- 触发背景：用户真实样本出现 `mapped_count=0`、`unmatched_count=15`，且未匹配字段包含机构信息、姓名、建议文本与参考范围碎片，导致“OCR识别有结果但无法有效入档”。
+- 目标：在不更换 OCR 供应商的前提下，完成“抽取增强 + 映射分层 + 人工确认后入档”的鲁棒方案，解决多来源报告格式差异导致的入档失败问题。
+
+### 后端改动
+- OCR抽取增强（`backend/app/services/ocr.py`）：
+  - 新增表格列语义识别（项目列/结果列），不再固定取前两列。
+  - 增加行文本切分兼容（冒号、多空格、管道符、数字尾值）。
+  - 新增表头过滤，避免“项目/结果/参考范围/单位”等表头误入字段。
+  - 字段来源标记（`table` / `text`）并优先保留表格来源。
+- OCR映射引擎升级（`backend/app/services/ocr.py`）：
+  - 增加标签归一化链路：去括号、去通用前后缀、去单位 token。
+  - 增加噪声过滤（姓名、性别、检查日期、体检机构、医生建议等元信息）。
+  - 增加分层匹配策略：精确 -> 去噪精确 -> 包含匹配，输出 `reason/score/matched_key`。
+  - 增加诊断输出：总字段、过滤数、候选数、唯一映射数、未匹配数。
+  - 增强 `aliases` 兼容：支持 JSON 字符串回退解析。
+- 入档流程改造（`backend/app/records/routes.py`）：
+  - 上传阶段 `POST /api/records/upload` 不再直接写入 `HealthIndicator`，只生成候选映射并写入 `ocr_raw_text` 快照。
+  - 确认阶段 `PUT /api/records/{id}/confirm` 支持提交 `confirmed_mappings`（人工确认结果）再入档。
+  - 保留自动确认兜底：若未提交确认列表，则按高置信阈值自动入档。
+  - 新增 OCR 响应字段：`candidate_mappings`、`filtered_fields`、`diagnostics`。
+- 数值异常判定增强（`backend/app/records/routes.py`）：
+  - `_evaluate_is_abnormal` 改为先提取数值，再按参考区间判异。
+  - 支持处理 `5.6 mmol/L↑`、`7.2*` 这类混合值，减少误判与漏判。
+- 配置新增（`backend/app/config.py`）：
+  - `OCR_AUTO_CONFIRM_MIN_SCORE`（默认 `0.92`），用于控制自动确认阈值。
+
+### 前端改动
+- OCR上传页增强（`frontend/src/views/RecordOcrUploadView.vue`）：
+  - 新增“候选映射确认表”，支持查看 OCR 字段、建议指标、置信度。
+  - 支持用户改选指标或标记忽略后再确认入档。
+  - 增加“过滤字段”统计展示，便于解释为什么某些字段未参与映射。
+- API扩展（`frontend/src/api/records.js`）：
+  - `confirmRecord(recordId, payload)` 支持提交人工确认映射请求体。
+
+### 测试与验证
+- 后端 OCR 专项：`cd backend && .venv\Scripts\python.exe -m pytest tests/test_ocr.py -q` -> `4 passed`
+- 后端全量：`cd backend && .venv\Scripts\python.exe -m pytest -q` -> `25 passed`
+- 前端构建：`cd frontend && npm run build` -> `成功`
+- 新增/更新测试：
+  - `backend/tests/test_ocr.py` 更新上传后不直接入指标的断言。
+  - 新增人工确认映射入档测试。
+  - 自动确认路径验证 `confirm_source=auto_high_confidence`。
+
+### 阻塞项
+- 无
+
+### 结论
+- OCR闭环已从“上传即入档”升级为“候选映射 -> 人工确认 -> 确认入档”，对多来源报告更稳健。
+- 对用户现场问题（映射为0、未匹配字段多）已完成结构性修复，不再仅依赖单一模板命中。
+
+
 

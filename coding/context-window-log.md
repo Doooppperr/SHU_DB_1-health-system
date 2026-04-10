@@ -152,3 +152,47 @@
 - 变更类型：验证结论
 - 详情：执行 `scripts/start-full-prod.ps1` 后，后端健康检查 `http://127.0.0.1:5000/api/health=200`，前端主页 `http://127.0.0.1:4173=200`。
 - 对后续影响：部署演示链路已打通，可直接用于答辩现场演示。
+
+- 时间：2026-04-10
+- 变更类型：需求变更
+- 详情：用户反馈真实 OCR 报告出现 `mapped_count=0`、`unmatched_count=15`，并提供了未匹配字段样例（含机构信息、姓名、医生建议、参考范围碎片等）。
+- 对后续影响：需要从“链路可用”升级到“多来源鲁棒入档”，不能仅靠固定模板映射。
+
+- 时间：2026-04-10
+- 变更类型：决策确认
+- 详情：用户确认采用“高鲁棒完整方案”，接受“上传后人工确认映射再入档”，并要求将实现结果同步到 `coding` 开发文档与 `context-window-log.md`。
+- 对后续影响：实施范围扩展为代码改造 + 测试回归 + 文档归档三部分。
+
+- 时间：2026-04-10
+- 变更类型：进度更新
+- 详情：完成后端 OCR 核心改造：
+  1) `backend/app/services/ocr.py` 增强抽取（列语义识别、表头过滤、文本切分兼容）；
+  2) 升级映射（噪声过滤、分层匹配、score/reason 诊断输出）；
+  3) `backend/app/records/routes.py` 改为“上传仅生成候选，确认时写入指标”；
+  4) 新增 `OCR_AUTO_CONFIRM_MIN_SCORE` 配置项；
+  5) 异常判定支持混合值提数。
+- 对后续影响：OCR 结果可审阅后入档，降低误匹配直接写库风险。
+
+- 时间：2026-04-10
+- 变更类型：进度更新
+- 详情：完成前端确认交互改造：
+  - `RecordOcrUploadView` 新增候选映射确认表（可改选、可忽略）；
+  - `confirmRecord` 支持提交 `confirmed_mappings`。
+- 对后续影响：用户可在确认入档前修正映射，适配多来源报告格式差异。
+
+- 时间：2026-04-10
+- 变更类型：验证结论
+- 详情：执行验证通过：
+  - `cd backend && .venv\Scripts\python.exe -m pytest tests/test_ocr.py -q` -> `4 passed`
+  - `cd backend && .venv\Scripts\python.exe -m pytest -q` -> `25 passed`
+  - `cd frontend && npm run build` -> `成功`
+- 对后续影响：改造未破坏既有模块，可进入答辩与持续优化阶段。
+
+- 时间：2026-04-10
+- 变更类型：文档同步
+- 详情：已同步更新以下文档：
+  - `coding/development-log.md`（新增“轮次7：OCR鲁棒入档改造”）
+  - `coding/test-report.md`（新增 OCR 改造专项验证章节）
+  - `coding/deploy-and-demo.md`（新增“映射为0现场处理”演示策略）
+  - `coding/context-window-log.md`（本次完整对话与实施过程归档）
+- 对后续影响：项目代码、测试与文档状态一致，便于后续交接与答辩复现。

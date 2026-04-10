@@ -108,7 +108,56 @@
           <el-descriptions-item label="OCR引擎">{{ uploadResult.ocr.provider }}</el-descriptions-item>
           <el-descriptions-item label="映射成功">{{ uploadResult.ocr.mapped_count }}</el-descriptions-item>
           <el-descriptions-item label="未匹配字段">{{ uploadResult.ocr.unmatched_count }}</el-descriptions-item>
+          <el-descriptions-item label="过滤字段">{{ uploadResult.ocr.filtered_count || 0 }}</el-descriptions-item>
         </el-descriptions>
+
+        <el-card
+          shadow="never"
+          v-if="uploadResult.item.status !== 'confirmed' && mappingDraftRows.length"
+          style="margin-bottom: 12px"
+        >
+          <template #header>
+            <span>候选映射确认（确认入档前可调整）</span>
+          </template>
+
+          <el-table :data="mappingDraftRows" border>
+            <el-table-column prop="label" label="OCR字段名" min-width="180" />
+            <el-table-column prop="value" label="OCR值" min-width="130" />
+            <el-table-column label="建议指标" min-width="190">
+              <template #default="scope">
+                {{ scope.row.suggested_code }} - {{ scope.row.suggested_name }}
+              </template>
+            </el-table-column>
+            <el-table-column label="确认入档指标" min-width="240">
+              <template #default="scope">
+                <el-select
+                  v-model="scope.row.indicator_dict_id"
+                  filterable
+                  clearable
+                  placeholder="可改选指标"
+                  style="width: 100%"
+                >
+                  <el-option
+                    v-for="dict in indicatorDicts"
+                    :key="dict.id"
+                    :label="`${dict.code} - ${dict.name}`"
+                    :value="dict.id"
+                  />
+                </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column label="置信度" width="100">
+              <template #default="scope">
+                {{ Number(scope.row.score || 0).toFixed(2) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="忽略" width="90">
+              <template #default="scope">
+                <el-switch v-model="scope.row.ignored" />
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
 
         <el-table :data="uploadResult.item.indicators || []" border style="margin-bottom: 12px">
           <el-table-column label="指标" min-width="220">
@@ -148,6 +197,7 @@ import { useRouter } from "vue-router";
 
 import MainNavActions from "../components/MainNavActions.vue";
 import { fetchFriends } from "../api/friends";
+import { fetchIndicatorDicts } from "../api/indicators";
 import { fetchInstitutions, fetchInstitutionPackages } from "../api/institutions";
 import { confirmRecord, uploadRecordByOcr } from "../api/records";
 import { fetchUsers } from "../api/users";
@@ -160,6 +210,8 @@ const institutions = ref([]);
 const packageMap = ref({});
 const manageableFriends = ref([]);
 const adminUsers = ref([]);
+const indicatorDicts = ref([]);
+const mappingDraftRows = ref([]);
 const selectedFile = ref(null);
 const fileList = ref([]);
 
@@ -215,6 +267,11 @@ const loadFriends = async () => {
 const loadAdminUsers = async () => {
   const { data } = await fetchUsers();
   adminUsers.value = data.items || [];
+};
+
+const loadIndicatorDicts = async () => {
+  const { data } = await fetchIndicatorDicts();
+  indicatorDicts.value = data.items || [];
 };
 
 const loadPackages = async (institutionId) => {
@@ -276,6 +333,17 @@ const submitUpload = async () => {
 
     const { data } = await uploadRecordByOcr(payload);
     uploadResult.value = data;
+    mappingDraftRows.value = (data?.ocr?.candidate_mappings || []).map((item, index) => ({
+      row_id: `${item.field_index ?? index}-${item.indicator_dict_id}`,
+      label: item.label,
+      value: item.value,
+      suggested_code: item.indicator_code,
+      suggested_name: item.indicator_name,
+      indicator_dict_id: item.indicator_dict_id,
+      score: item.score,
+      reason: item.reason,
+      ignored: false,
+    }));
     ElMessage.success("OCR解析完成");
   } catch (error) {
     errorMessage.value = error?.response?.data?.message || "上传解析失败";
@@ -292,9 +360,26 @@ const confirmParsedRecord = async () => {
   confirmLoading.value = true;
 
   try {
-    const { data } = await confirmRecord(uploadResult.value.item.id);
+    const confirmedMappings = mappingDraftRows.value
+      .filter((row) => !row.ignored && row.indicator_dict_id && row.value)
+      .map((row) => ({
+        indicator_dict_id: Number(row.indicator_dict_id),
+        value: String(row.value).trim(),
+        score: Number(row.score || 1),
+      }));
+
+    const requestPayload = mappingDraftRows.value.length
+      ? { confirmed_mappings: confirmedMappings }
+      : null;
+
+    const { data } = await confirmRecord(uploadResult.value.item.id, requestPayload);
     uploadResult.value.item = data.item;
-    ElMessage.success("档案已确认");
+    const confirmedCount = data?.ocr?.confirmed_count;
+    if (typeof confirmedCount === "number") {
+      ElMessage.success(`档案已确认，入档 ${confirmedCount} 项指标`);
+    } else {
+      ElMessage.success("档案已确认");
+    }
   } catch (error) {
     ElMessage.error(error?.response?.data?.message || "确认失败");
   } finally {
@@ -338,7 +423,7 @@ onMounted(async () => {
     }
     form.owner_id = authStore.user?.id || null;
     const ownerLoader = authStore.user?.role === "admin" ? loadAdminUsers() : loadFriends();
-    await Promise.all([loadInstitutions(), ownerLoader]);
+    await Promise.all([loadInstitutions(), ownerLoader, loadIndicatorDicts()]);
   } catch (error) {
     errorMessage.value = error?.response?.data?.message || "页面初始化失败";
   }
