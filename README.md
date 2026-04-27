@@ -1,8 +1,131 @@
-# 部署与答辩演示脚本
+# 体检评价与健康档案系统（Health System）
 
-## 1. 一键启动脚本（项目根目录）
+基于 `Flask + Vue3` 的课程项目，覆盖“体检机构浏览 -> 档案录入（手动/OCR）-> 亲友授权代传 -> 趋势分析 -> 评论审核”完整闭环。
 
-### 开发模式
+## 1. 核心能力
+
+- 用户注册、登录、JWT 鉴权与刷新。
+- 体检机构与套餐浏览。
+- 健康档案管理：手动录入指标 + OCR 上传解析 + 确认入档。
+- 亲友关系管理：添加关系、授权开关、代传档案。
+- 指标趋势分析：按归属人 + 指标查看历史曲线和统计摘要。
+- 评论系统：用户提交评论、管理员审核可见性、前台展示。
+- 管理员用户管理：用户列表、修改、删除。
+
+## 2. 技术栈（含数据栈）
+
+| 层 | 技术 |
+|---|---|
+| 前端 | Vue 3、Vite、Vue Router、Pinia、Element Plus、Axios、ECharts |
+| 后端 | Flask、Flask-SQLAlchemy、Flask-JWT-Extended、Flask-Migrate、Flask-Cors |
+| 数据库 | SQLite（默认文件库） |
+| OCR | 华为云 OCR（支持 Mock 与真实模式切换） |
+| 生产服务 | Waitress（后端）、Vite Preview（前端演示） |
+| 自动化测试 | Pytest（后端） |
+
+## 3. 项目架构
+
+```text
+health system/
+├─ backend/                    # Flask 后端
+│  ├─ app/
+│  │  ├─ auth/users/friends/.../routes.py
+│  │  ├─ models/               # SQLAlchemy 数据模型
+│  │  ├─ services/             # OCR 与文件存储服务
+│  │  ├─ config.py             # 配置与环境变量映射
+│  │  ├─ seed.py               # 种子数据与默认管理员初始化
+│  │  └─ __init__.py           # app factory + blueprint 注册
+│  ├─ tests/                   # 后端单元测试
+│  ├─ .env.example             # 环境变量模板
+│  ├─ run.py                   # 开发启动入口
+│  └─ wsgi.py                  # 生产启动入口
+├─ frontend/                   # Vue 前端
+│  ├─ src/api/                 # 按业务拆分的接口层
+│  ├─ src/views/               # 页面视图
+│  ├─ src/stores/              # Pinia 状态管理
+│  ├─ src/router/index.js      # 路由与鉴权守卫
+│  └─ vite.config.js           # 代理与打包分包配置
+├─ scripts/                    # PowerShell 一键启动脚本
+└─ coding/                     # 开发记录、测试报告、演示脚本
+```
+
+## 4. 数据模型与关系
+
+核心表：`users`、`friend_relations`、`institutions`、`packages`、`indicator_categories`、`indicator_dicts`、`health_records`、`health_indicators`、`comments`。
+
+关键关系：
+
+- `health_records.owner_id`：档案归属人；`uploader_id`：上传人（支持代传）。
+- `health_indicators` 通过 `(record_id, indicator_dict_id)` 唯一约束避免重复指标。
+- `friend_relations.auth_status=true` 才允许亲友代传与查看趋势。
+- 评论提交依赖“用户已上传该机构档案”门槛，`comments.is_visible` 由管理员审核控制。
+
+## 5. 配置文件说明
+
+| 文件 | 作用 |
+|---|---|
+| `backend/.env` | 本地运行环境变量（由 `.env.example` 复制） |
+| `backend/app/config.py` | 默认配置、开发/测试/生产配置类 |
+| `frontend/vite.config.js` | 前端端口、`/api` 代理、构建分包策略 |
+| `backend/requirements.txt` | 后端 Python 依赖 |
+| `frontend/package.json` | 前端 npm 依赖与脚本 |
+| `scripts/*.ps1` | 开发/生产一键启动脚本 |
+| `.gitignore` | 忽略虚拟环境、node_modules、上传目录与本地 `.env` |
+
+## 6. 环境变量（`backend/.env`）
+
+先复制：
+
+```powershell
+Copy-Item .\backend\.env.example .\backend\.env
+```
+
+主要变量：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `DATABASE_URL` | `sqlite:///health_system.db` | 数据库连接串（默认 SQLite） |
+| `JWT_SECRET_KEY` | 开发默认值 | JWT 签名密钥，生产必须替换 |
+| `OCR_PROVIDER` | `huawei` | OCR 供应商标识 |
+| `OCR_USE_MOCK` | `1` | `1` 用 Mock，`0` 用真实华为云 OCR |
+| `HUAWEI_OCR_ENDPOINT` | 空 | 华为云 OCR Endpoint |
+| `HUAWEI_OCR_AK` / `HUAWEI_OCR_SK` | 空 | 华为云 AK/SK |
+| `HUAWEI_PROJECT_ID` | 空 | 华为云项目 ID |
+| `OCR_API_PATH` | `/v2/{project_id}/ocr/general-table` | OCR API 路径模板 |
+| `OCR_PDF_MAX_PAGES` | `8` | PDF 最多解析页数 |
+| `OCR_AUTO_CONFIRM_MIN_SCORE` | `0.92` | OCR 自动确认阈值 |
+| `UPLOAD_DIR` | `backend/uploads` | 上传文件目录（运行目录相关） |
+| `UPLOAD_URL_BASE` | `/uploads` | 上传文件访问前缀 |
+| `DEFAULT_ADMIN_USERNAME` | `admin` | 默认管理员用户名 |
+| `DEFAULT_ADMIN_PASSWORD` | `admin123` | 默认管理员密码（生产务必修改） |
+| `DEFAULT_ADMIN_EMAIL` | `admin@example.com` | 默认管理员邮箱 |
+
+## 7. 运行环境要求
+
+- Windows + PowerShell（项目脚本基于 `.ps1`）。
+- Python `3.10+`（后端使用现代类型标注语法）。
+- Node.js `18+`、npm `9+`（前端 Vite 6）。
+
+## 8. 本地安装与启动
+
+### 8.1 首次安装
+
+```powershell
+# 1) 后端依赖
+Set-Location .\backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+# 2) 前端依赖
+Set-Location ..\frontend
+npm install
+
+# 3) 回到项目根目录
+Set-Location ..
+```
+
+### 8.2 开发模式（推荐）
 
 ```powershell
 .\scripts\start-full-dev.ps1
@@ -11,7 +134,7 @@
 - 后端：`http://127.0.0.1:5000`
 - 前端：`http://127.0.0.1:5173`
 
-### 生产演示模式
+### 8.3 生产演示模式
 
 ```powershell
 .\scripts\start-full-prod.ps1
@@ -20,74 +143,31 @@
 - 后端（Waitress）：`http://127.0.0.1:5000`
 - 前端预览：`http://127.0.0.1:4173`
 
-说明：
-- 如需单独启动后端：`.\scripts\start-backend-prod.ps1`
-- 如需单独启动前端：`.\scripts\start-frontend-prod.ps1`
+可单独启动：
 
-## 2. 演示账号准备
+- `.\scripts\start-backend-prod.ps1`
+- `.\scripts\start-frontend-prod.ps1`
 
-- 管理员（默认种子）：
-  - 用户名：`admin`
-  - 密码：`admin123`
-- 普通用户：现场注册两个账号，例如：
-  - `demo_user_a`
-  - `demo_user_b`
+## 9. 默认账号
 
-## 3. 12分钟答辩演示流程（建议）
+- 管理员（启动后自动种子）：`admin / admin123`
 
-### 第1段：基础闭环（2分钟）
+建议仅用于本地演示，生产环境请在 `.env` 覆盖默认管理员配置。
 
-1. 用 `demo_user_a` 登录。
-2. 进入机构列表 -> 机构详情，展示套餐数据。
-3. 进入档案列表，新建1份个人档案并录入2-3个指标。
+## 10. 测试与质量检查
 
-验收点：
-- 已登录可访问业务页面。
-- 机构/套餐和个人档案链路正常。
+```powershell
+# 后端测试
+Set-Location .\backend
+.\.venv\Scripts\python.exe -m pytest -q
 
-### 第2段：OCR闭环（2分钟）
+# 前端构建检查
+Set-Location ..\frontend
+npm run build
+```
 
-1. 进入 `OCR上传` 页面，上传报告。
-2. 展示“已映射指标”和“未匹配字段”。
-3. 点击“确认入档”，跳转档案详情。
+## 11. 补充文档
 
-验收点：
-- OCR上传解析成功。
-- 状态可从 `parsed` 到 `confirmed`。
-
-### 第3段：亲友授权闭环（3分钟）
-
-1. `demo_user_a` 在亲友管理中添加 `demo_user_b`。
-2. 切换 `demo_user_b` 登录，在“授权给我的关系”中打开授权。
-3. 切回 `demo_user_a`，创建一份归属人为 `demo_user_b` 的档案（代传）。
-
-验收点：
-- 未授权时禁止代传，授权后允许代传。
-- 档案归属人与上传人可区分显示。
-
-### 第4段：趋势分析闭环（2分钟）
-
-1. 进入“指标趋势”页面。
-2. 选择归属人+指标，展示折线图与参考区间线。
-3. 展示最小值/最大值/最新值统计。
-
-验收点：
-- 趋势按“归属人+指标”聚合。
-- 支持本人和已授权亲友趋势查询。
-
-### 第5段：评论审核闭环（3分钟）
-
-1. `demo_user_a` 在机构详情提交评论（先确保有该机构上传记录）。
-2. 用 `admin` 登录进入“评论审核”，将评论设为可见。
-3. 回到机构详情，展示公开评论已出现。
-
-验收点：
-- 用户提交评论需满足“有该机构体检记录”门槛。
-- 管理员可审核控制 `is_visible`。
-
-## 4. 常见问题排查
-
-1. 前端无法访问后端：确认后端监听 `5000`，并检查 Vite 代理配置。
-2. 评论无法提交：先确认该用户上传过该机构档案。
-3. 无法进入审核页：确认登录的是 `admin` 角色账号。
-4. OCR映射少：样本可能不是指标页，可用手动录入补充演示。
+- 演示与答辩流程：`coding/deploy-and-demo.md`
+- 全量测试报告：`coding/test-report.md`
+- 开发过程记录：`coding/development-log.md`
