@@ -7,6 +7,10 @@ from app.extensions import db
 
 class User(db.Model):
     __tablename__ = "users"
+    __table_args__ = (
+        db.CheckConstraint("role in ('user', 'admin')", name="ck_users_role"),
+        db.CheckConstraint("length(trim(username)) > 0", name="ck_users_username_not_blank"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)

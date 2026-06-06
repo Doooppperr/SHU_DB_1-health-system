@@ -24,6 +24,8 @@ DATABASE_URL=opengauss+psycopg2://health_app:<HEALTH_APP_PASSWORD>@127.0.0.1:154
 
 后端不再默认回退到本地 SQLite；未配置 `DATABASE_URL` 时会直接报错，避免误生成新的本地数据库。
 
+并发连接池可通过 `.env` 中的 `DB_POOL_SIZE`、`DB_MAX_OVERFLOW`、`DB_POOL_TIMEOUT`、`DB_POOL_RECYCLE` 调整。
+
 ```bash
 python run.py
 ```
@@ -40,6 +42,12 @@ python -m waitress --listen=0.0.0.0:5050 wsgi:app
 
 ```powershell
 .\scripts\start-backend-prod.ps1
+```
+
+如需把模型中的数据库级约束和触发器应用到现有 GaussDB：
+
+```powershell
+python .\scripts\apply_gaussdb_rules.py
 ```
 
 ## OCR 配置

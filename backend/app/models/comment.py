@@ -5,6 +5,10 @@ from app.extensions import db
 
 class Comment(db.Model):
     __tablename__ = "comments"
+    __table_args__ = (
+        db.CheckConstraint("rating between 1 and 5", name="ck_comments_rating_range"),
+        db.CheckConstraint("length(trim(content)) > 0", name="ck_comments_content_not_blank"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)

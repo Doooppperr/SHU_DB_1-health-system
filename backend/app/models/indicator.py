@@ -3,6 +3,9 @@ from app.extensions import db
 
 class IndicatorCategory(db.Model):
     __tablename__ = "indicator_categories"
+    __table_args__ = (
+        db.CheckConstraint("length(trim(name)) > 0", name="ck_indicator_categories_name_not_blank"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(80), nullable=False, unique=True)
@@ -22,6 +25,13 @@ class IndicatorDict(db.Model):
     __tablename__ = "indicator_dicts"
     __table_args__ = (
         db.UniqueConstraint("category_id", "name", name="uq_indicator_category_name"),
+        db.CheckConstraint("length(trim(code)) > 0", name="ck_indicator_dicts_code_not_blank"),
+        db.CheckConstraint("length(trim(name)) > 0", name="ck_indicator_dicts_name_not_blank"),
+        db.CheckConstraint("value_type in ('numeric', 'text')", name="ck_indicator_dicts_value_type"),
+        db.CheckConstraint(
+            "reference_low is null or reference_high is null or reference_low <= reference_high",
+            name="ck_indicator_dicts_reference_range",
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)

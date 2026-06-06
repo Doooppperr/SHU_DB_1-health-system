@@ -98,6 +98,10 @@ Copy-Item .\backend\.env.example .\backend\.env
 | `OCR_AUTO_CONFIRM_MIN_SCORE` | `0.92` | OCR 自动确认阈值 |
 | `UPLOAD_DIR` | `backend/uploads` | 上传文件目录（运行目录相关） |
 | `UPLOAD_URL_BASE` | `/uploads` | 上传文件访问前缀 |
+| `DB_POOL_SIZE` | `10` | SQLAlchemy 数据库连接池基础连接数 |
+| `DB_MAX_OVERFLOW` | `20` | 连接池临时溢出连接数 |
+| `DB_POOL_TIMEOUT` | `30` | 获取数据库连接的等待秒数 |
+| `DB_POOL_RECYCLE` | `1800` | 连接回收秒数，降低长连接失效风险 |
 | `DEFAULT_ADMIN_USERNAME` | `admin` | 默认管理员用户名 |
 | `DEFAULT_ADMIN_PASSWORD` | `admin123` | 默认管理员密码（生产务必修改） |
 | `DEFAULT_ADMIN_EMAIL` | `admin@example.com` | 默认管理员邮箱 |
@@ -181,6 +185,13 @@ npm run build
 说明：后端单元测试使用内存 SQLite 测试配置，不依赖云数据库；真实演示运行依赖 SSH 隧道和 GaussDB。
 
 本地历史 SQLite 文件不再作为运行数据库使用，已从仓库移除；如需重新迁移旧数据，请使用仓库外备份文件配合迁移脚本。
+
+数据库级规则更新脚本：
+
+```powershell
+Set-Location .\backend
+.\.venv\Scripts\python.exe .\scripts\apply_gaussdb_rules.py
+```
 
 ## 11. 补充文档
 

@@ -1,6 +1,7 @@
 param(
     [string]$ListenHost = "0.0.0.0",
-    [int]$Port = 5050
+    [int]$Port = 5050,
+    [int]$Threads = 8
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,4 +14,4 @@ if (-not (Test-Path ".\.venv\Scripts\python.exe")) {
     throw "backend/.venv not found. Please create virtualenv and install dependencies first."
 }
 
-& ".\.venv\Scripts\python.exe" -m waitress --listen "$ListenHost`:$Port" wsgi:app
+& ".\.venv\Scripts\python.exe" -m waitress --listen "$ListenHost`:$Port" --threads $Threads wsgi:app

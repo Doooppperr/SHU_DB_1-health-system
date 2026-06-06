@@ -7,6 +7,8 @@ class FriendRelation(db.Model):
     __tablename__ = "friend_relations"
     __table_args__ = (
         db.UniqueConstraint("user_id", "friend_user_id", name="uq_friend_pair"),
+        db.CheckConstraint("user_id <> friend_user_id", name="ck_friend_not_self"),
+        db.CheckConstraint("length(trim(relation_name)) > 0", name="ck_friend_relation_name_not_blank"),
     )
 
     id = db.Column(db.Integer, primary_key=True)

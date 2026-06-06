@@ -7,6 +7,10 @@ class Institution(db.Model):
     __tablename__ = "institutions"
     __table_args__ = (
         db.UniqueConstraint("name", "branch_name", name="uq_institution_branch"),
+        db.CheckConstraint("length(trim(name)) > 0", name="ck_institutions_name_not_blank"),
+        db.CheckConstraint("length(trim(branch_name)) > 0", name="ck_institutions_branch_not_blank"),
+        db.CheckConstraint("length(trim(address)) > 0", name="ck_institutions_address_not_blank"),
+        db.CheckConstraint("length(trim(district)) > 0", name="ck_institutions_district_not_blank"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -44,6 +48,10 @@ class Package(db.Model):
     __tablename__ = "packages"
     __table_args__ = (
         db.UniqueConstraint("institution_id", "name", name="uq_package_institution_name"),
+        db.CheckConstraint("length(trim(name)) > 0", name="ck_packages_name_not_blank"),
+        db.CheckConstraint("length(trim(focus_area)) > 0", name="ck_packages_focus_area_not_blank"),
+        db.CheckConstraint("gender_scope in ('all', 'male', 'female', 'female_all')", name="ck_packages_gender_scope"),
+        db.CheckConstraint("price >= 0", name="ck_packages_price_non_negative"),
     )
 
     id = db.Column(db.Integer, primary_key=True)

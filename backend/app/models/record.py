@@ -5,6 +5,9 @@ from app.extensions import db
 
 class HealthRecord(db.Model):
     __tablename__ = "health_records"
+    __table_args__ = (
+        db.CheckConstraint("status in ('draft', 'parsed', 'confirmed')", name="ck_health_records_status"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     owner_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
@@ -77,6 +80,8 @@ class HealthIndicator(db.Model):
     __tablename__ = "health_indicators"
     __table_args__ = (
         db.UniqueConstraint("record_id", "indicator_dict_id", name="uq_record_indicator"),
+        db.CheckConstraint("length(trim(value)) > 0", name="ck_health_indicators_value_not_blank"),
+        db.CheckConstraint("source in ('manual', 'ocr')", name="ck_health_indicators_source"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
