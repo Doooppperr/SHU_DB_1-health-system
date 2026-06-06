@@ -1,3 +1,7 @@
+param(
+    [int]$BackendPort = 5050
+)
+
 $ErrorActionPreference = "Stop"
 
 $backendScript = Join-Path $PSScriptRoot "start-backend-dev.ps1"
@@ -8,7 +12,10 @@ Start-Process powershell -ArgumentList @(
     "-ExecutionPolicy",
     "Bypass",
     "-File",
-    "`"$backendScript`""
+    "`"$backendScript`"",
+    "-Port",
+    $BackendPort
 )
 
+$env:VITE_API_PROXY_TARGET = "http://127.0.0.1:$BackendPort"
 & $frontendScript

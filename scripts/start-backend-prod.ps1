@@ -1,6 +1,6 @@
 param(
     [string]$ListenHost = "0.0.0.0",
-    [int]$Port = 5000
+    [int]$Port = 5050
 )
 
 $ErrorActionPreference = "Stop"

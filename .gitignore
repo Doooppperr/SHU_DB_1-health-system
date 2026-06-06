@@ -13,3 +13,4 @@ backend/.env
 backend/instance/*.db
 backend/instance/*.sqlite
 backend/instance/*.sqlite3
+scripts/*.log

@@ -28,12 +28,12 @@ DATABASE_URL=opengauss+psycopg2://health_app:<HEALTH_APP_PASSWORD>@127.0.0.1:154
 python run.py
 ```
 
-服务默认运行在 `http://127.0.0.1:5000`。
+服务默认运行在 `http://127.0.0.1:5050`。
 
 ## 生产模式启动（Waitress）
 
 ```bash
-python -m waitress --listen=0.0.0.0:5000 wsgi:app
+python -m waitress --listen=0.0.0.0:5050 wsgi:app
 ```
 
 项目根目录也提供脚本：

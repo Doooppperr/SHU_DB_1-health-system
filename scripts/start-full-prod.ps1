@@ -1,6 +1,6 @@
 param(
     [string]$BackendListenHost = "0.0.0.0",
-    [int]$BackendPort = 5000,
+    [int]$BackendPort = 5050,
     [string]$FrontendListenHost = "0.0.0.0",
     [int]$FrontendPort = 4173
 )
@@ -22,4 +22,5 @@ Start-Process powershell -ArgumentList @(
     $BackendPort
 )
 
+$env:VITE_API_PROXY_TARGET = "http://127.0.0.1:$BackendPort"
 & $frontendScript -ListenHost $FrontendListenHost -Port $FrontendPort
