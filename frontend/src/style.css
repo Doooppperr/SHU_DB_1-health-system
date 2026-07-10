@@ -13,6 +13,15 @@ body {
   min-height: 100vh;
 }
 
+.app-route-stage {
+  min-height: 100vh;
+  transition: margin-right 0.2s ease;
+}
+
+.ai-panel-active .app-route-stage {
+  margin-right: var(--ai-panel-width);
+}
+
 .page-shell {
   min-height: 100vh;
   display: flex;
@@ -146,6 +155,10 @@ body {
 }
 
 @media (max-width: 860px) {
+  .ai-panel-active .app-route-stage {
+    margin-right: 0;
+  }
+
   .captcha-row {
     grid-template-columns: 1fr;
   }

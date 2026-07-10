@@ -31,6 +31,18 @@ class Config:
     OCR_PDF_MAX_PAGES = int(os.getenv("OCR_PDF_MAX_PAGES", "8"))
     OCR_AUTO_CONFIRM_MIN_SCORE = float(os.getenv("OCR_AUTO_CONFIRM_MIN_SCORE", "0.92"))
 
+    AI_PROVIDER = os.getenv("AI_PROVIDER", "deepseek")
+    AI_USE_MOCK = os.getenv("AI_USE_MOCK", "0").strip().lower() in {"1", "true", "yes", "on"}
+    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+    DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
+    DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    AI_REQUEST_TIMEOUT_SECONDS = float(os.getenv("AI_REQUEST_TIMEOUT_SECONDS", "60"))
+    AI_SUPPORT_PHONE = os.getenv("AI_SUPPORT_PHONE", "")
+    AI_MAX_HISTORY_MESSAGES = int(os.getenv("AI_MAX_HISTORY_MESSAGES", "20"))
+    AI_MAX_SELECTED_RECORDS = int(os.getenv("AI_MAX_SELECTED_RECORDS", "5"))
+    AI_GUEST_RATE_LIMIT_PER_MINUTE = int(os.getenv("AI_GUEST_RATE_LIMIT_PER_MINUTE", "10"))
+    AI_AUTH_RATE_LIMIT_PER_MINUTE = int(os.getenv("AI_AUTH_RATE_LIMIT_PER_MINUTE", "30"))
+
     UPLOAD_DIR = os.getenv("UPLOAD_DIR", os.path.join(os.getcwd(), "uploads"))
     UPLOAD_URL_BASE = os.getenv("UPLOAD_URL_BASE", "/uploads")
     MAX_CONTENT_LENGTH = 20 * 1024 * 1024
@@ -48,6 +60,9 @@ class TestingConfig(Config):
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(minutes=5)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(minutes=30)
     OCR_USE_MOCK = True
+    AI_USE_MOCK = True
+    AI_GUEST_RATE_LIMIT_PER_MINUTE = 1000
+    AI_AUTH_RATE_LIMIT_PER_MINUTE = 1000
 
 
 class ProductionConfig(Config):

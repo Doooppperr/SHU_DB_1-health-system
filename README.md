@@ -1,6 +1,6 @@
 # 体检评价与健康档案系统
 
-这是一个基于 Flask、Vue 3 和 SQLite 的本地健康档案管理系统，支持用户认证、体检机构浏览、健康档案录入、OCR 报告识别、亲友授权、趋势分析和评论审核。
+这是一个基于 Flask、Vue 3 和 SQLite 的本地健康档案管理系统，支持用户认证、体检机构浏览、健康档案录入、OCR 报告识别、亲友授权、趋势分析、AI 健康科普和评论审核。
 
 ## 技术栈
 
@@ -10,6 +10,7 @@
 | 后端 | Flask、Flask-SQLAlchemy、Flask-JWT-Extended、Flask-Cors |
 | 数据库 | SQLite |
 | OCR | 本地 Mock；可选接入华为云 OCR API |
+| AI | DeepSeek V4 Flash；本地 FAQ 与测试 Mock |
 | 本机演示服务 | Waitress、Vite Preview |
 | 测试 | Pytest |
 
@@ -21,6 +22,8 @@
 - 上传图片或 PDF，通过 OCR 解析并人工确认入档。
 - 添加亲友、管理授权、代传亲友档案。
 - 按用户和指标查看历史趋势。
+- 登录前使用悬浮 AI 助手咨询注册、登录和系统功能。
+- 登录后选择同一人的最多 5 份档案，获取指标科普和一般生活建议。
 - 用户评论、管理员审核和用户管理。
 
 ## 项目结构
@@ -147,6 +150,22 @@ OCR_USE_MOCK=1
 ```
 
 需要验证真实 OCR 时，将 `OCR_USE_MOCK` 改为 `0`，并填写 `.env.example` 中的 OCR Endpoint、AK、SK 和 Project ID。
+
+## AI 助手配置
+
+复制 `.env.example` 后，在被 Git 忽略的 `backend/.env` 中填写：
+
+```env
+AI_PROVIDER=deepseek
+AI_USE_MOCK=0
+DEEPSEEK_API_KEY=替换为新建的密钥
+DEEPSEEK_MODEL=deepseek-v4-flash
+AI_SUPPORT_PHONE=替换为人工客服电话
+```
+
+不要把真实 API Key 写入 `.env.example`、源码或提交记录。开发时可设置 `AI_USE_MOCK=1`，无需外部 API 即可验证界面和接口。
+
+AI 对话不写入 SQLite；浏览器仅在当前标签页的 `sessionStorage` 中暂存最近 10 轮和更早摘要，用于刷新恢复。结束对话或退出登录会清空本次会话。选择体检档案后，前端会要求用户确认指标将发送至 DeepSeek API 处理。
 
 ## 测试
 

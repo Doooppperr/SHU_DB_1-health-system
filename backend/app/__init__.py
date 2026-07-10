@@ -2,6 +2,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, send_from_directory
 
+from .ai import ai_bp
 from .auth import auth_bp
 from .comments import comments_bp
 from .config import config_by_name
@@ -22,6 +23,7 @@ def create_app(config_name="development"):
     init_extensions(app)
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
+    app.register_blueprint(ai_bp, url_prefix="/api/ai")
     app.register_blueprint(users_bp, url_prefix="/api/users")
     app.register_blueprint(friends_bp, url_prefix="/api/friends")
     app.register_blueprint(institutions_bp, url_prefix="/api/institutions")

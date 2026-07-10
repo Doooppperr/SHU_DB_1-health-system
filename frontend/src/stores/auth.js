@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 
 import { getMe, login, refresh, register } from "../api/auth";
+import { clearAllAiSessionStorage } from "../utils/aiSession";
 
 const STORAGE_KEY = "health-system-auth";
 
@@ -46,6 +47,7 @@ export const useAuthStore = defineStore("auth", {
     async registerUser(payload) {
       const { data } = await register(payload);
       if (data.access_token && data.refresh_token) {
+        clearAllAiSessionStorage();
         this.accessToken = data.access_token;
         this.refreshToken = data.refresh_token;
         this.user = data.user;
@@ -56,6 +58,7 @@ export const useAuthStore = defineStore("auth", {
 
     async loginUser(payload) {
       const { data } = await login(payload);
+      clearAllAiSessionStorage();
       this.accessToken = data.access_token;
       this.refreshToken = data.refresh_token;
       this.user = data.user;
@@ -87,6 +90,7 @@ export const useAuthStore = defineStore("auth", {
     },
 
     logout() {
+      clearAllAiSessionStorage();
       this.accessToken = "";
       this.refreshToken = "";
       this.user = null;
