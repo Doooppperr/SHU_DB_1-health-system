@@ -99,6 +99,31 @@ AI_USE_MOCK=1
 
 真实 API Key 只能保存在被 Git 忽略的 `.env` 中。
 
+请求示例：
+
+```json
+{
+  "message": "请解释空腹血糖指标",
+  "history": [],
+  "summary": "",
+  "selected_record_ids": [1, 2]
+}
+```
+
+响应包含 `reply`、`decision`、`source`、`summary` 和 `compacted_count`。`decision` 可能为：
+
+- `answer`：允许返回的系统说明或健康科普。
+- `support`：复杂问题，后端丢弃模型生成的诊疗内容并替换成人工客服模板。
+- `emergency`：疑似急症，固定提示拨打 120。
+
+安全与隐私规则：
+
+- 匿名请求不能附加档案；登录请求由 JWT 确定当前用户。
+- 档案 ID 在后端重新检查本人、管理员或已授权亲友权限，不能依赖前端选择结果。
+- 只允许同一归属人的最多 5 份已确认档案。
+- DeepSeek 使用 `deepseek-v4-flash` 非思考模式和 JSON Output；API Key 不下发前端。
+- 匿名与登录用户分别限流；提示词、对话和指标不写入日志或数据库。
+
 ## 测试
 
 ```powershell
@@ -106,6 +131,8 @@ AI_USE_MOCK=1
 ```
 
 测试使用独立的内存 SQLite，不会修改 `instance/health_system.db`。
+
+当前完整测试结果：`54 passed`。测试使用 AI Mock 和伪造 HTTP 响应验证模型契约，不消耗真实 API 额度。
 
 ## OCR
 
