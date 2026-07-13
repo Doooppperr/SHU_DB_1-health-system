@@ -73,6 +73,12 @@ function ocrResult({ pending = false, recordId = 31 } = {}) {
       provider: "huawei",
       pending_confirmation: pending,
       attachment_id: pending ? `attachment-${recordId}` : null,
+      replacement_safe: true,
+      pages_total: 1,
+      pages_succeeded: 1,
+      pages_failed: 0,
+      pages_empty: 0,
+      pages_truncated: false,
       candidate_mappings: [
         {
           field_index: 0,
@@ -200,11 +206,153 @@ describe("RecordOcrUploadView confirmation", () => {
       "报告已解析，确认入档前原档案保持不变"
     );
     expect(wrapper.vm.uploadNeedsConfirmation).toBe(true);
+    expect(wrapper.find('[data-testid="ocr-mapping-review"]').exists()).toBe(true);
 
     await wrapper.vm.confirmParsedRecord();
     expect(mocks.confirmRecord).toHaveBeenCalledWith(
       31,
-      expect.objectContaining({ attachment_id: "attachment-31" })
+      expect.objectContaining({
+        attachment_id: "attachment-31",
+        ocr_update_mode: "replace_ocr",
+      })
+    );
+  });
+
+  it("can explicitly merge a supplemental report instead of replacing old OCR rows", async () => {
+    mocks.routeQuery.record_id = "31";
+    mocks.fetchRecordDetail.mockResolvedValueOnce({
+      data: {
+        item: {
+          id: 31,
+          display_id: "health31",
+          owner_id: 10,
+          owner: { username: "tester" },
+          exam_date: "2026-07-13",
+          indicator_count: 2,
+          indicators: [],
+          status: "confirmed",
+          ocr_pending_confirmation: true,
+        },
+      },
+    });
+    const wrapper = await mountView();
+
+    expect(wrapper.vm.ocrUpdateMode).toBe("replace_ocr");
+    wrapper.vm.ocrUpdateMode = "merge";
+    await wrapper.vm.confirmParsedRecord();
+
+    expect(mocks.confirmRecord).toHaveBeenCalledWith(
+      31,
+      expect.objectContaining({
+        attachment_id: "attachment-31",
+        ocr_update_mode: "merge",
+      })
+    );
+  });
+
+  it("forces merge when OCR page completeness cannot support replacement", async () => {
+    mocks.routeQuery.record_id = "31";
+    const incompleteResult = ocrResult({ pending: true });
+    incompleteResult.ocr.replacement_safe = false;
+    incompleteResult.ocr.pages_total = 2;
+    incompleteResult.ocr.pages_succeeded = 1;
+    incompleteResult.ocr.pages_failed = 1;
+    mocks.fetchRecordDetail.mockResolvedValueOnce({
+      data: {
+        item: {
+          id: 31,
+          display_id: "health31",
+          owner_id: 10,
+          owner: { username: "tester" },
+          exam_date: "2026-07-13",
+          indicators: [],
+          status: "confirmed",
+          ocr_pending_confirmation: true,
+        },
+      },
+    });
+    mocks.fetchPendingRecordOcr.mockResolvedValueOnce({ data: incompleteResult });
+    const wrapper = await mountView();
+
+    expect(wrapper.vm.ocrReplacementSafe).toBe(false);
+    expect(wrapper.vm.ocrUpdateMode).toBe("merge");
+
+    wrapper.vm.ocrUpdateMode = "replace_ocr";
+    await wrapper.vm.confirmParsedRecord();
+    expect(mocks.confirmRecord).not.toHaveBeenCalled();
+    expect(ElMessage.error).toHaveBeenCalledWith("本次 OCR 结果不完整，只能选择合并更新");
+
+    wrapper.vm.ocrUpdateMode = "merge";
+    await wrapper.vm.confirmParsedRecord();
+    expect(mocks.confirmRecord).toHaveBeenCalledWith(
+      31,
+      expect.objectContaining({ ocr_update_mode: "merge" })
+    );
+  });
+
+  it("requires explicit confirmation before filing an incomplete new OCR record", async () => {
+    const incompleteResult = ocrResult();
+    incompleteResult.ocr.replacement_safe = false;
+    incompleteResult.ocr.pages_empty = 1;
+    mocks.uploadRecordByOcr.mockResolvedValueOnce({ data: incompleteResult });
+    const wrapper = await mountView();
+    wrapper.vm.form.exam_date = "2026-07-13";
+    wrapper.vm.onFileChange(
+      { raw: new File(["report"], "report.png", { type: "image/png" }) },
+      []
+    );
+
+    await wrapper.vm.submitUpload();
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="ocr-completeness-warning"]').exists()).toBe(true);
+    await wrapper.vm.confirmParsedRecord();
+
+    expect(ElMessageBox.confirm).toHaveBeenCalledWith(
+      expect.stringContaining("OCR 结果可能缺页或缺项"),
+      "OCR 结果可能不完整",
+      expect.objectContaining({ type: "warning" })
+    );
+    expect(mocks.confirmRecord).toHaveBeenCalledWith(
+      31,
+      expect.objectContaining({ accept_incomplete_ocr: true })
+    );
+  });
+
+  it("requires every ignored candidate to be explicitly reviewed before replacement", async () => {
+    mocks.routeQuery.record_id = "31";
+    const pendingResult = ocrResult({ pending: true });
+    pendingResult.ocr.candidate_mappings[0].score = 0.8;
+    pendingResult.ocr.candidate_mappings[0].requires_review = true;
+    mocks.fetchRecordDetail.mockResolvedValueOnce({
+      data: {
+        item: {
+          id: 31,
+          display_id: "health31",
+          owner_id: 10,
+          owner: { username: "tester" },
+          exam_date: "2026-07-13",
+          indicators: [],
+          status: "confirmed",
+          ocr_pending_confirmation: true,
+        },
+      },
+    });
+    mocks.fetchPendingRecordOcr.mockResolvedValueOnce({ data: pendingResult });
+    const wrapper = await mountView();
+
+    expect(wrapper.vm.mappingDraftRows[0].ignored).toBe(true);
+    await wrapper.vm.confirmParsedRecord();
+    expect(mocks.confirmRecord).not.toHaveBeenCalled();
+    expect(ElMessage.error).toHaveBeenCalledWith(
+      "替换旧 OCR 指标前，请逐项复核并确认所有候选指标"
+    );
+
+    wrapper.vm.mappingDraftRows[0].ignored = false;
+    await wrapper.vm.confirmParsedRecord();
+    expect(mocks.confirmRecord).toHaveBeenCalledWith(
+      31,
+      expect.objectContaining({ ocr_update_mode: "replace_ocr" })
     );
   });
 

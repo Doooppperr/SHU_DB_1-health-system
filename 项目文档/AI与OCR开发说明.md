@@ -155,6 +155,26 @@ AI 限流是当前进程内的分钟桶：访客按 IP，登录用户按用户 I
 
 所有 `/api/records/*` 接口都要求 JWT 普通用户权限。
 
+### 3.0 解析、映射与安全边界
+
+真实华为通用表格 OCR 当前返回 `parser_version=region-v2`。解析流程不依赖某一张固定报告模板：
+
+1. 先识别响应中的每个 `table` 区域，并在区域内部独立收集行列坐标。不同表格即使都从第 0 行、第 0 列开始，也不会被合并或互相覆盖。
+2. 每个区域分别识别语义表头；如果没有标准表头，则根据代码/名称/数值特征推断标签列和结果列。表头不再限制只能出现在最前几行。
+3. 表格候选和表格之外的文本行并行解析。已经找到表格字段不会关闭文本兜底，因此双栏基本资料、无边框检验列表和英文 `label: value (reference ...)` 可以与表格共存。
+4. 相同 `label + value` 去重时优先保留结构化表格来源；跨页仍按相同规则汇总。
+
+候选映射只面向当前 `indicator_dicts` 中已经配置的代码、名称和别名：
+
+- 精确代码/别名优先。纯英文短代码不允许任意子串命中，避免把其他项目误映射为 `TG`、`UA`、`ALT` 等短代码指标。
+- 同一指标出现多个 OCR 候选时，先用该指标的数值与单位规则规范化后比较。规范值冲突、无效数值、低置信度或不安全匹配都会返回 `requires_review=true`，并使分数低于自动确认阈值。
+- 数值必须只有一个明确数字。带逗号的 OCR 数字可能表示小数或千分位，服务端不会把 `5,6` 猜成 `56`；无法消歧时要求人工编辑。
+- `μmol/L`、`µmol/L`、`umol/L` 以及常见 `mol·L⁻¹` 写法可按等价字形规范化，但系统不进行指标字典未声明的单位换算。
+- 只有带明确 `reference/ref/参考范围` 标记的结果尾缀会在规范化时剥离；任意多数字文本仍会被拒绝。
+- 姓名、性别、日期、医生、机构等报告元数据进入 `filtered_fields`；未配置或无法安全匹配的医疗项目进入 `unmatched_fields`。两者都不会自动写入健康指标。
+
+因此，三份示例报告得到 10/9/8 个候选，只表示这些报告中出现的项目恰好已在当前字典配置。遇到字典外指标时，正确行为是保留原 OCR 字段供人工检查或先扩展字典，而不是猜成最相似的现有指标。
+
 ### 3.1 上传并解析
 
 `POST /api/records/upload`，`multipart/form-data`，请求总大小上限 20 MiB。允许 `.pdf`、`.png`、`.jpg`、`.jpeg`、`.webp`。
@@ -173,7 +193,9 @@ AI 限流是当前进程内的分钟桶：访客按 IP，登录用户按用户 I
 - 新结果作为待确认附件，返回 `ocr.pending_confirmation=true` 和随机、不透明的 `attachment_id`。
 - 再次上传会替换旧待确认版本；只有新事务成功后才删除旧暂存文件。
 
-成功响应中的 `ocr` 包含 `provider`、映射/未匹配/过滤数量、`candidate_mappings`、`unmatched_fields`、`filtered_fields`、`diagnostics`、`pending_confirmation` 和 `attachment_id`。`mapped_count` 在上传和恢复接口中的统计口径不应用作业务主键或确认数量。
+成功响应中的 `ocr` 包含 `provider`、`parser_version`、映射/未匹配/过滤数量、`candidate_mappings`、`unmatched_fields`、`filtered_fields`、`diagnostics`、`pending_confirmation`、`attachment_id`，以及 `pages_total/processed/succeeded/failed/empty/truncated`、`replacement_safe`。`mapped_count` 表示候选映射数量（可能含待复核项），不能作为已确认数量或业务主键。
+
+候选可包含 `source`、`requires_review`、`conflict`、`conflict_values` 和 `value_error`。`diagnostics` 至少给出总字段、过滤、原始候选、唯一候选、未匹配、冲突和需复核数量。前端必须把 `requires_review=true` 或分数低于 `OCR_AUTO_CONFIRM_MIN_SCORE` 的行默认设为忽略，等待用户编辑和勾选。
 
 ### 3.2 确认候选映射
 
@@ -182,6 +204,7 @@ AI 限流是当前进程内的分钟桶：访客按 IP，登录用户按用户 I
 ~~~json
 {
   "attachment_id": "服务端返回的不透明版本标识",
+  "ocr_update_mode": "replace_ocr",
   "confirmed_mappings": [
     { "indicator_dict_id": 2, "value": "5.6", "score": 1.0 },
     { "indicator_dict_id": 9, "value": "365", "score": 1.0 },
@@ -194,7 +217,13 @@ AI 限流是当前进程内的分钟桶：访客按 IP，登录用户按用户 I
 - `confirmed_mappings` 可选；省略时仅自动确认达到 `OCR_AUTO_CONFIRM_MIN_SCORE`（默认 0.92）的候选。
 - 同一 `indicator_dict_id` 最后一个有效、未忽略且值非空的映射生效；`ignored:true` 直接跳过，不会删除该 ID 之前已经出现的有效映射。
 - 指标按字典 ID upsert，来源记为 `ocr` 并重新计算异常标记。
+- 既有档案的 `ocr_update_mode` 可为 `replace_ocr` 或 `merge`。确认页面默认 `replace_ocr`，但服务端省略字段时按 `merge` 处理，以兼容旧客户端。
+- `replace_ocr` 先写入本次已确认映射，再删除该档案中没有出现在本次映射里的旧 `source=ocr` 指标；`source=manual` 指标始终保留。为防止误清空，`replace_ocr` 至少需要一个有效确认映射，且只能用于既有档案的待确认附件。
+- `replace_ocr` 还要求 `replacement_safe=true` 且本次快照中的每一个候选都在请求中显式确认；否则分别返回 `OCR_REPLACE_UNSAFE`（409）或 `OCR_REPLACE_REVIEW_REQUIRED`（400）。失败页、空结果页、页数截断和缺少新版完整性信息都不能作为安全替换依据。
+- `merge` 只 upsert 本次映射，所有未出现在新报告中的旧 OCR 指标继续保留，适合真正的补充报告。
+- 新建 OCR 档案在 `replacement_safe=false` 时必须显式传 `accept_incomplete_ocr=true`，否则返回 `OCR_INCOMPLETE_CONFIRMATION_REQUIRED`（400）；前端应先提示重新上传，并通过二次确认获取用户选择。
 - 既有档案只有确认成功后才原子替换正式报告和上传人，随后清理旧正式报告。
+- 成功响应的 `ocr` 返回 `update_mode` 和 `removed_ocr_count`，前端可据此提示本次删除了多少个旧 OCR 指标。
 
 ### 3.3 恢复或放弃待确认版本
 
@@ -220,6 +249,9 @@ AI 限流是当前进程内的分钟桶：访客按 IP，登录用户按用户 I
 - 每次请求结束或取消后清空档案选择和同意；切换选择必须重新同意。
 - AbortController 取消请求，发送中禁止重复提交。
 - OCR 页面切换目标档案时应使未完成的上传、确认、取消和弹窗结果失效；响应写回前同时核对目标、上下文序号和 `attachment_id`。
+- OCR 确认页显示 `parser_version`，允许编辑候选值，并把低置信度、冲突、非法值和 `requires_review` 候选默认设为忽略；不能把 `unmatched_fields` 当作已确认指标静默提交。
+- 给既有档案确认时应显式提交 `ocr_update_mode`。界面默认 `replace_ocr` 并解释“仅清理旧 OCR、保留手工指标”，同时保留 `merge` 选项。
+- 页面必须显式展示有效解析页数和 `replacement_safe` 警告；不完整的既有档案附件禁用替换，不完整的新建档案需二次确认并提交 `accept_incomplete_ocr=true`。
 - 档案界面使用 `display_id`/`record_display_id` 展示，所有 API 参数继续使用整数 `id`。
 
 ## 5. 相关实现与验证
@@ -229,6 +261,8 @@ AI 限流是当前进程内的分钟桶：访客按 IP，登录用户按用户 I
 - `backend/app/ai/routes.py`
 - `backend/app/ai/service.py`
 - `backend/app/records/routes.py`
+- `backend/app/services/ocr.py`
+- `backend/app/services/indicator_values.py`
 - `backend/app/models/record.py`
 - `frontend/src/components/AiAssistant.vue`
 - `frontend/src/stores/aiChat.js`
@@ -253,4 +287,6 @@ Pop-Location
 git diff --check
 ~~~
 
-2026-07-13 基线为后端 117 项、前端 18 个测试文件共 97 项；GitHub Actions 在 Python 3.12 与 Node.js 20 上通过。
+2026-07-13 当前本地基线为后端 143 项、前端 18 个测试文件共 102 项，前端生产构建、`pip check` 和生产依赖审计通过。OCR 专项覆盖独立表区域、表格/文本并行、无表头列推断、保守短代码映射、候选冲突、数值/单位安全、分页完整性保护以及既有档案的 replace/merge 语义。
+
+此外，用三份不含真实健康信息的合成报告调用真实华为云通用表格 OCR 完成 smoke：中文有表头表格、中文无边框列表、英文行式布局分别准确映射 10/9/8 个已配置指标，冲突和需复核数量均为 0。该 smoke 不进入 CI，也不保存或输出真实凭据；CI 继续使用 Mock 与伪造响应验证接口契约。

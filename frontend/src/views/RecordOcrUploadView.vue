@@ -25,7 +25,7 @@
       <el-alert
         v-if="isAttachMode && targetRecord"
         :title="`报告将录入现有档案 ${formatRecordDisplayId(targetRecord)}`"
-        description="不会创建重复档案。确认前原档案状态、原报告和已有指标保持不变；确认入档时，OCR 会更新同名指标并保留报告中未涉及的已有指标。"
+        description="不会创建重复档案。确认前原档案保持不变；确认时可选择替换以前的 OCR 指标，或与已有指标合并。手工录入且本报告未涉及的指标始终保留。"
         type="info"
         show-icon
         :closable="false"
@@ -167,15 +167,64 @@
           <el-descriptions-item label="档案归属人">{{ uploadResult.item.owner?.username || "-" }}</el-descriptions-item>
           <el-descriptions-item label="上传人">{{ uploadResult.item.uploader?.username || "-" }}</el-descriptions-item>
           <el-descriptions-item label="OCR引擎">{{ uploadResult.ocr.provider }}</el-descriptions-item>
-          <el-descriptions-item label="映射成功">{{ uploadResult.ocr.mapped_count }}</el-descriptions-item>
-          <el-descriptions-item label="未匹配字段">{{ uploadResult.ocr.unmatched_count }}</el-descriptions-item>
-          <el-descriptions-item label="过滤字段">{{ uploadResult.ocr.filtered_count || 0 }}</el-descriptions-item>
+          <el-descriptions-item label="解析器版本">{{ uploadResult.ocr.parser_version || "-" }}</el-descriptions-item>
+          <el-descriptions-item label="候选映射">{{ uploadResult.ocr.mapped_count }}</el-descriptions-item>
+          <el-descriptions-item label="需复核">
+            {{ uploadResult.ocr.diagnostics?.review_required_count || 0 }}
+          </el-descriptions-item>
+          <el-descriptions-item label="未作为指标">{{ uploadResult.ocr.unmatched_count }}</el-descriptions-item>
+          <el-descriptions-item label="报告信息字段">{{ uploadResult.ocr.filtered_count || 0 }}</el-descriptions-item>
+          <el-descriptions-item
+            v-if="uploadResult.ocr.pages_total"
+            label="报告页处理"
+          >
+            {{ Math.max(0, (uploadResult.ocr.pages_succeeded ?? 0) - (uploadResult.ocr.pages_empty ?? 0)) }}
+            / {{ uploadResult.ocr.pages_total }} 页提取到字段
+          </el-descriptions-item>
         </el-descriptions>
+
+        <el-alert
+          v-if="!ocrReplacementSafe"
+          title="本次 OCR 存在失败页、空结果页、页数截断或旧版完整性信息缺失，结果可能不完整。请优先重新上传；继续确认前务必核对全部候选。"
+          type="warning"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 12px"
+          data-testid="ocr-completeness-warning"
+        />
+
+        <el-card
+          v-if="uploadResult.ocr?.pending_confirmation"
+          shadow="never"
+          style="margin-bottom: 12px"
+          data-testid="ocr-update-mode"
+        >
+          <template #header>
+            <span>已有 OCR 指标处理方式</span>
+          </template>
+          <el-radio-group v-model="ocrUpdateMode">
+            <el-radio value="replace_ocr" :disabled="!ocrReplacementSafe">
+              以本报告替换旧 OCR 指标（完整识别时推荐）
+            </el-radio>
+            <el-radio value="merge">合并更新，保留旧 OCR 指标</el-radio>
+          </el-radio-group>
+          <el-alert
+            v-if="ocrReplacementSafe"
+            :title="ocrUpdateMode === 'replace_ocr'
+              ? '将删除本报告未出现的旧 OCR 指标，但不会删除未涉及的手工录入指标。'
+              : '将保留本报告未出现的旧 OCR 指标，适合补充上传部分检验页。'"
+            type="info"
+            :closable="false"
+            show-icon
+            style="margin-top: 12px"
+          />
+        </el-card>
 
         <el-card
           shadow="never"
-          v-if="uploadResult.item.status !== 'confirmed' && mappingDraftRows.length"
+          v-if="uploadNeedsConfirmation && mappingDraftRows.length"
           style="margin-bottom: 12px"
+          data-testid="ocr-mapping-review"
         >
           <template #header>
             <span>候选映射确认（确认入档前可调整）</span>
@@ -183,7 +232,11 @@
 
           <el-table :data="mappingDraftRows" border>
             <el-table-column prop="label" label="OCR字段名" min-width="180" />
-            <el-table-column prop="value" label="OCR值" min-width="130" />
+            <el-table-column label="OCR值" min-width="180">
+              <template #default="scope">
+                <el-input v-model="scope.row.value" aria-label="OCR值" />
+              </template>
+            </el-table-column>
             <el-table-column label="建议指标" min-width="190">
               <template #default="scope">
                 {{ scope.row.suggested_code }} - {{ scope.row.suggested_name }}
@@ -209,7 +262,8 @@
             </el-table-column>
             <el-table-column label="置信度" width="100">
               <template #default="scope">
-                {{ Number(scope.row.score || 0).toFixed(2) }}
+                <div>{{ Number(scope.row.score || 0).toFixed(2) }}</div>
+                <el-tag v-if="scope.row.requires_review" type="warning" size="small">需复核</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="忽略" width="90">
@@ -239,7 +293,7 @@
 
         <el-card shadow="never" v-if="uploadResult.ocr.unmatched_fields?.length">
           <template #header>
-            <span>未匹配字段（可在档案详情页手动修正）</span>
+            <span>未作为健康指标的识别字段（可能是姓名、日期或报告说明）</span>
           </template>
           <el-table :data="uploadResult.ocr.unmatched_fields" border>
             <el-table-column prop="label" label="OCR字段名" min-width="180" />
@@ -294,6 +348,7 @@ const cancelLoading = ref(false);
 const errorMessage = ref("");
 const uploadResult = ref(null);
 const targetRecord = ref(null);
+const ocrUpdateMode = ref("replace_ocr");
 
 const form = reactive({
   owner_id: null,
@@ -326,6 +381,9 @@ const uploadNeedsConfirmation = computed(() => Boolean(
     uploadResult.value.item?.status !== "confirmed"
     || uploadResult.value.ocr?.pending_confirmation
   )
+));
+const ocrReplacementSafe = computed(() => (
+  uploadResult.value?.ocr?.replacement_safe === true
 ));
 
 const currentPackages = computed(() => {
@@ -389,6 +447,11 @@ const applyOcrResult = (data) => {
   mappingDraftRows.value = createOcrMappingRows(
     data?.ocr?.candidate_mappings || []
   );
+  if (data?.ocr?.pending_confirmation) {
+    ocrUpdateMode.value = data.ocr.replacement_safe === true
+      ? "replace_ocr"
+      : "merge";
+  }
 };
 
 const resetTargetUploadState = () => {
@@ -401,6 +464,7 @@ const resetTargetUploadState = () => {
   fileList.value = [];
   uploadResult.value = null;
   mappingDraftRows.value = [];
+  ocrUpdateMode.value = "replace_ocr";
   errorMessage.value = "";
   uploadLoading.value = false;
   confirmLoading.value = false;
@@ -601,6 +665,33 @@ const confirmParsedRecord = async () => {
     ElMessage.error("暂存 OCR 版本无效，请刷新页面后重试");
     return;
   }
+  let acceptIncompleteOcr = false;
+  if (!attachmentId && !ocrReplacementSafe.value) {
+    try {
+      await ElMessageBox.confirm(
+        "本次 OCR 结果可能缺页或缺项。建议取消并重新上传；若继续，请先核对所有候选指标。仍要确认入档吗？",
+        "OCR 结果可能不完整",
+        {
+          confirmButtonText: "已核对，继续入档",
+          cancelButtonText: "返回检查",
+          type: "warning",
+        }
+      );
+      acceptIncompleteOcr = true;
+    } catch {
+      return;
+    }
+  }
+  if (attachmentId && ocrUpdateMode.value === "replace_ocr") {
+    if (!ocrReplacementSafe.value) {
+      ElMessage.error("本次 OCR 结果不完整，只能选择合并更新");
+      return;
+    }
+    if (confirmedMappings.length !== mappingDraftRows.value.length) {
+      ElMessage.error("替换旧 OCR 指标前，请逐项复核并确认所有候选指标");
+      return;
+    }
+  }
 
   const actionSequence = ++pendingActionSequence;
   const contextVersion = targetContextVersion;
@@ -609,11 +700,15 @@ const confirmParsedRecord = async () => {
   confirmLoading.value = true;
   try {
     const requestPayload = {};
+    if (acceptIncompleteOcr) {
+      requestPayload.accept_incomplete_ocr = true;
+    }
     if (mappingDraftRows.value.length) {
       requestPayload.confirmed_mappings = confirmedMappings;
     }
     if (attachmentId) {
       requestPayload.attachment_id = attachmentId;
+      requestPayload.ocr_update_mode = ocrUpdateMode.value;
     }
 
     const { data } = await confirmRecord(
@@ -641,8 +736,12 @@ const confirmParsedRecord = async () => {
       targetRecord.value = data.item;
     }
     const confirmedCount = data?.ocr?.confirmed_count;
+    const removedCount = data?.ocr?.removed_ocr_count;
     if (typeof confirmedCount === "number") {
-      ElMessage.success(`档案已确认，入档 ${confirmedCount} 项指标`);
+      const removedText = typeof removedCount === "number" && removedCount > 0
+        ? `，移除 ${removedCount} 项旧 OCR 指标`
+        : "";
+      ElMessage.success(`档案已确认，入档 ${confirmedCount} 项指标${removedText}`);
     } else {
       ElMessage.success("档案已确认");
     }

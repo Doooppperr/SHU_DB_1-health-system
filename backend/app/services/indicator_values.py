@@ -15,6 +15,17 @@ _OCR_REFERENCE_SUFFIX_RE = re.compile(
 )
 
 
+def _normalize_unit_aliases(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    normalized = re.sub(r"(?i)\b(?:u|μ)mol\b", "μmol", normalized)
+    normalized = re.sub(
+        r"(?i)\b([munμ]?mol)\s*[·⋅]\s*l\s*(?:\^?\s*[-−]\s*1|⁻¹)\b",
+        r"\1/L",
+        normalized,
+    )
+    return normalized
+
+
 class IndicatorValueError(ValueError):
     pass
 
@@ -22,8 +33,13 @@ class IndicatorValueError(ValueError):
 def parse_numeric_value(raw_value) -> Decimal | None:
     if raw_value is None:
         return None
-    text = unicodedata.normalize("NFKC", str(raw_value)).strip().replace(",", "")
+    text = _normalize_unit_aliases(str(raw_value)).strip()
     if not text:
+        return None
+    # A single comma can be either a decimal separator or a thousands
+    # separator. Guessing turns values such as 5,6 into 56, so ambiguous OCR
+    # punctuation must be reviewed instead of silently rewritten.
+    if "," in text:
         return None
     match = _NUMBER_RE.search(text)
     if match is None:
@@ -44,8 +60,8 @@ def _canonical_decimal(value: Decimal) -> str:
 
 
 def normalize_indicator_value(indicator_dict, raw_value) -> str:
-    text = unicodedata.normalize(
-        "NFKC", str("" if raw_value is None else raw_value)
+    text = _normalize_unit_aliases(
+        str("" if raw_value is None else raw_value)
     ).strip()
     if not text:
         raise IndicatorValueError("indicator value is required")
@@ -53,18 +69,23 @@ def normalize_indicator_value(indicator_dict, raw_value) -> str:
     if indicator_dict.value_type != "numeric":
         return text
 
-    matches = list(_NUMBER_RE.finditer(text.replace(",", "")))
+    if "," in text:
+        raise IndicatorValueError(
+            "numeric comma is ambiguous; use a decimal point or remove thousands separators"
+        )
+
+    matches = list(_NUMBER_RE.finditer(text))
     if len(matches) != 1:
         raise IndicatorValueError("numeric indicator value must contain one number")
 
-    normalized_text = text.replace(",", "")
+    normalized_text = text
     match = _NUMBER_RE.search(normalized_text)
     numeric = parse_numeric_value(match.group(0))
     if numeric is None:
         raise IndicatorValueError("invalid numeric indicator value")
 
     remainder = normalized_text[: match.start()] + normalized_text[match.end() :]
-    expected_unit = unicodedata.normalize("NFKC", indicator_dict.unit or "").strip()
+    expected_unit = _normalize_unit_aliases(indicator_dict.unit or "").strip()
     if expected_unit:
         remainder = re.sub(re.escape(expected_unit), "", remainder, flags=re.IGNORECASE)
     remainder = _DECORATION_RE.sub("", remainder)
@@ -89,8 +110,8 @@ def normalize_ocr_indicator_value(indicator_dict, raw_value) -> str:
         if indicator_dict.value_type != "numeric":
             raise
 
-        text = unicodedata.normalize(
-            "NFKC", str("" if raw_value is None else raw_value)
+        text = _normalize_unit_aliases(
+            str("" if raw_value is None else raw_value)
         ).strip()
         primary_result = _OCR_REFERENCE_SUFFIX_RE.sub("", text).strip()
         if not primary_result or primary_result == text:

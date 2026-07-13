@@ -92,7 +92,7 @@ LOCAL_DATABASE_URL=sqlite:///another-local.db
 - institution_images：每机构 0–7 排序位，第一张为封面。
 - health_records.institution_id 与 package_id 可为空，未选择机构也可正常保存档案和指标。
 - health_records 的用户展示编号由内部主键派生为 `health{id}`，通过 `display_id` 返回；数据库仍使用整数主键，API 路径继续传数字 ID。
-- `ocr_raw_text` 保存 OCR 解析快照；既有档案重新 OCR 时还会暂存带随机 `attachment_id` 的待确认附件，但不会新增分析结果或聊天记录表。
+- `ocr_raw_text` 保存 OCR 解析快照、`parser_version` 和候选诊断；既有档案重新 OCR 时还会暂存带随机 `attachment_id` 的待确认附件，但不会新增分析结果或聊天记录表。
 
 ## 接口分区
 
@@ -186,10 +186,23 @@ OCR_USE_MOCK=1
 
 真实 OCR 需在 .env 配置 HUAWEI_OCR_ENDPOINT、HUAWEI_OCR_AK、HUAWEI_OCR_SK 和 HUAWEI_PROJECT_ID。OCR 生成候选映射，用户确认后才形成 confirmed 档案。
 
+真实华为通用表格 OCR 使用 `region-v2` 解析器：
+
+- 每个 `table` 区域分别收集单元格、识别表头和推断标签/结果列，避免多个表格复用相同行列编号时发生串行或覆盖。
+- 表格候选与表格之外的文本行并行提取，不再因为已经找到若干表格字段就关闭文本兜底；支持带表头表格、无表头代码/名称/结果表以及无边框“名称 + 数值”列表。
+- 同一指标出现多个候选时先按规范值去重；值冲突、非法数值、低置信度或不安全的模糊匹配会设置 `requires_review`，并把分数压到自动确认阈值以下。
+- 英文短代码只接受指标字典中的精确代码/别名，不做任意子串命中，避免把其他项目误映射为短代码指标。
+- 数值必须只有一个明确数字；小数逗号/千分位逗号等有歧义的 OCR 文本不被静默改写。`μmol/L`、`µmol/L`、`umol/L` 和常见 `mol·L⁻¹` 写法只作为等价单位记法规范化，不进行未经配置的单位换算。
+
+指标映射的边界是当前 `indicator_dicts` 配置。未配置的医疗项目、报告元数据和无法安全判定的字段会进入未匹配/过滤/人工复核结果，不会靠相似名称猜测或自动写库。
+
 OCR 支持两种流程：
 
 - 新档案：`POST /api/records/upload` 发送文件、体检日期和归属信息，创建 `parsed` 档案；`PUT /api/records/{id}/confirm` 确认候选映射。
 - 既有档案：同一上传接口额外发送 `record_id`，服务端只写入待确认快照并保持原 `status`、正式报告和指标不变；`GET /api/records/{id}/ocr-pending` 可恢复页面，确认时必须带匹配的 `attachment_id`，也可用 `DELETE /api/records/{id}/ocr-pending` 放弃。
+- 既有档案确认支持 `ocr_update_mode=replace_ocr|merge`。前端默认 `replace_ocr`：只删除未出现在本次已确认映射中的旧 OCR 来源指标，手工来源指标始终保留；`merge` 只做 upsert 并保留旧 OCR 指标。为兼容旧调用方，服务端省略该字段时仍默认 `merge`。
+- OCR 快照记录 `pages_total/processed/succeeded/failed/empty/truncated` 与 `replacement_safe`。只要存在请求失败页、HTTP 成功但未提取到字段的空页、超过 `OCR_PDF_MAX_PAGES` 的截断页，或旧快照缺少完整性证据，后端都会拒绝 `replace_ocr`；同时要求替换请求显式确认每一个候选，避免默认忽略项导致旧值被误删。
+- 新建 OCR 档案若结果不完整，`PUT /api/records/{id}/confirm` 必须显式携带 `accept_incomplete_ocr=true`。前端通过醒目警告和二次确认生成该字段，旧客户端无法绕过服务端保护。
 
 既有档案补传上传、补传确认、补传取消和档案删除共享基于 `ocr_raw_text` 快照的乐观并发控制。旧页面或并发操作分别返回 `OCR_ATTACHMENT_CONFLICT`、`OCR_ATTACHMENT_STALE` 或 `RECORD_DELETE_CONFLICT`（HTTP 409），并清理未被数据库采用的新文件。直接新建的 OCR 档案仍按普通 `parsed → confirmed` 流程处理。
 
@@ -225,8 +238,10 @@ Waitress 本机演示（推荐从项目根目录使用启动脚本）：
 .\.venv\Scripts\python.exe -m pytest -q
 ~~~
 
-当前完整结果：117 passed。
+当前完整结果：143 passed。
 
-测试使用独立内存 SQLite，不修改 instance/health_system.db；覆盖三角色路由与接口隔离、邀请码生命周期和并发消费、一机构一管理员、机构软停用、相册限制与清理、可选机构、指标规范化、报告文件保护、机构数据脱敏只读、AI SSE/分析/超时/取消、OCR 新建与既有档案暂存/恢复/并发、展示编号、schema v2 模型约束及迁移幂等性。
+测试使用独立内存 SQLite，不修改 instance/health_system.db；覆盖三角色路由与接口隔离、邀请码生命周期和并发消费、一机构一管理员、机构软停用、相册限制与清理、可选机构、指标规范化、报告文件保护、机构数据脱敏只读、AI SSE/分析/超时/取消，以及 OCR 多表区域隔离、表格/文本并行、无表头列推断、短代码误匹配防护、候选冲突复核、数值/单位安全、既有档案 replace/merge 和并发控制。
+
+另用三份不含真实健康信息的合成报告调用真实华为 OCR 完成 smoke：中文表格、中文列表和英文行式报告分别准确映射 10/9/8 个已配置指标，均无冲突或需复核项。该结果验证的是多布局通用解析链路，不代表未配置的任意医疗项目会被自动识别；未知指标仍需先扩充字典或人工处理。
 
 GitHub Actions 使用 Python 3.12 执行 `pip check` 和完整 Pytest；前端任务使用 Node.js 20 执行依赖审计、Vitest 与生产构建，且不注入真实 DeepSeek 或华为云密钥。

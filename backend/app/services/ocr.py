@@ -12,6 +12,8 @@ from huaweicloudsdkcore.auth.credentials import BasicCredentials
 from huaweicloudsdkcore.sdk_request import SdkRequest
 from huaweicloudsdkcore.signer.signer import Signer
 
+from .indicator_values import IndicatorValueError, normalize_ocr_indicator_value
+
 
 class OCRProvider(ABC):
     @abstractmethod
@@ -31,14 +33,36 @@ class MockHuaweiOCRProvider(OCRProvider):
 
         return {
             "engine": "mock_huawei_ocr",
+            "parser_version": "mock-v1",
             "raw_text": "模拟OCR识别结果（用于第4轮闭环联调）",
             "fields": fields,
-            "meta": {"file_path": file_path, "mode": "mock"},
+            "meta": {
+                "file_path": file_path,
+                "mode": "mock",
+                "pages_total": 1,
+                "pages_processed": 1,
+                "pages_succeeded": 1,
+                "pages_failed": 0,
+                "pages_empty": 0,
+                "pages_truncated": False,
+                "replacement_safe": True,
+            },
         }
 
 
 class HuaweiOCRProvider(OCRProvider):
-    VALUE_ONLY_PATTERN = re.compile(r"^[<>≤≥≈~]?\s*[+-]?\d+(?:\.\d+)?(?:\s*[A-Za-z%/μµ0-9²]+)?$")
+    PARSER_VERSION = "region-v2"
+    VALUE_ONLY_PATTERN = re.compile(
+        r"^[<>≤≥≈~]?\s*[+-]?(?:\d+(?:[.,]\d+)?|\.\d+)"
+        r"(?:\s*[A-Za-z%/μµ0-9²·⋅^⁻¹−-]+)?"
+        r"(?:\s*(?:↑|↓|↗|↘|▲|▼|△|▽|H|L|\*)){0,2}$",
+        re.IGNORECASE,
+    )
+    REFERENCE_VALUE_PATTERN = re.compile(
+        r"^[<>≤≥≈~]?\s*[+-]?(?:\d+(?:[.,]\d+)?|\.\d+).*?"
+        r"(?:reference|ref\.?|参考范围|参考值)",
+        re.IGNORECASE,
+    )
 
     def __init__(self, endpoint: str, ak: str, sk: str, project_id: str, api_path: str, pdf_max_pages: int = 8):
         self.endpoint = self._normalize_endpoint(endpoint)
@@ -141,21 +165,69 @@ class HuaweiOCRProvider(OCRProvider):
                 HuaweiOCRProvider._extract_cells(item, collector)
 
     @staticmethod
-    def _extract_text_lines(node, collector):
+    def _is_table_region(node) -> bool:
+        if not isinstance(node, dict):
+            return False
+        node_type = unicodedata.normalize("NFKC", str(node.get("type") or "")).strip().lower()
+        return node_type == "table"
+
+    @staticmethod
+    def _extract_table_regions(node, collector):
+        """Collect each OCR table independently so row/column indices cannot collide."""
         if isinstance(node, dict):
+            if HuaweiOCRProvider._is_table_region(node):
+                cells = []
+                HuaweiOCRProvider._extract_cells(node, cells)
+                if cells:
+                    collector.append(cells)
+                return
+            for value in node.values():
+                HuaweiOCRProvider._extract_table_regions(value, collector)
+        elif isinstance(node, list):
+            for item in node:
+                HuaweiOCRProvider._extract_table_regions(item, collector)
+
+    @staticmethod
+    def _extract_text_lines(node, collector, *, skip_table_regions=False):
+        if isinstance(node, dict):
+            if skip_table_regions and HuaweiOCRProvider._is_table_region(node):
+                return
             for key, value in node.items():
                 if isinstance(value, str) and key.lower() in {"words", "text", "content", "word"}:
                     text = value.strip()
                     if text:
                         collector.append(text)
                 else:
-                    HuaweiOCRProvider._extract_text_lines(value, collector)
+                    HuaweiOCRProvider._extract_text_lines(
+                        value,
+                        collector,
+                        skip_table_regions=skip_table_regions,
+                    )
         elif isinstance(node, list):
             for item in node:
-                HuaweiOCRProvider._extract_text_lines(item, collector)
+                HuaweiOCRProvider._extract_text_lines(
+                    item,
+                    collector,
+                    skip_table_regions=skip_table_regions,
+                )
 
-    @staticmethod
-    def _split_line_to_pair(line: str):
+    @classmethod
+    def _parts_to_pair(cls, parts):
+        cleaned_parts = [str(part or "").strip() for part in parts]
+        cleaned_parts = [part for part in cleaned_parts if part]
+        if len(cleaned_parts) < 2:
+            return None, None
+        for value_index in range(1, len(cleaned_parts)):
+            if cls._is_result_value_line(cleaned_parts[value_index]):
+                label = " - ".join(cleaned_parts[:value_index]).strip()
+                if label:
+                    return label, cleaned_parts[value_index]
+        if len(cleaned_parts) == 2:
+            return cleaned_parts[0], cleaned_parts[1]
+        return None, None
+
+    @classmethod
+    def _split_line_to_pair(cls, line: str):
         text = (line or "").strip()
         if not text:
             return None, None
@@ -170,31 +242,31 @@ class HuaweiOCRProvider(OCRProvider):
 
         tab_parts = re.split(r"\t+", text)
         if len(tab_parts) >= 2:
-            return tab_parts[0].strip(), tab_parts[1].strip()
+            return cls._parts_to_pair(tab_parts)
 
         many_space_parts = re.split(r"\s{2,}", text)
         if len(many_space_parts) >= 2:
-            return many_space_parts[0].strip(), many_space_parts[1].strip()
+            return cls._parts_to_pair(many_space_parts)
 
         pipe_parts = [part.strip() for part in re.split(r"[|｜丨]", text) if part.strip()]
         if len(pipe_parts) >= 2:
-            return pipe_parts[0], pipe_parts[1]
+            return cls._parts_to_pair(pipe_parts)
 
         code_row_match = re.match(
-            r"^(?:[A-Za-z]{0,3}\d{1,4}[A-Za-z0-9-]*\s+)(?P<label>[\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z0-9()（）/%\-·_.]{0,40})\s+(?P<value>[+-]?\d+(?:\.\d+)?(?:\s*[A-Za-z%/μµ0-9²]+)?)\b",
+            r"^(?:[A-Za-z]{0,3}\d{1,4}[A-Za-z0-9-]*\s+)(?P<label>[\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z0-9()（）/%\-·_.]{0,40})\s+(?P<value>[+-]?\d+(?:\.\d+)?(?:\s*[A-Za-z%/μµ0-9²·⋅^⁻¹−-]+)?)\b",
             text,
         )
         if code_row_match:
             return code_row_match.group("label").strip(), code_row_match.group("value").strip()
 
         table_row_match = re.match(
-            r"^(?P<label>[\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z0-9()（）/%\-·_.]{0,40})\s+(?P<value>[+-]?\d+(?:\.\d+)?(?:\s*[A-Za-z%/μµ0-9²]+)?)\s+[<>]?\s*\d+(?:\.\d+)?\s*[-~至]\s*[<>]?\s*\d+(?:\.\d+)?",
+            r"^(?P<label>[\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z0-9()（）/%\-·_.]{0,40})\s+(?P<value>[+-]?\d+(?:\.\d+)?(?:\s*[A-Za-z%/μµ0-9²·⋅^⁻¹−-]+)?)\s+[<>]?\s*\d+(?:\.\d+)?\s*[-~至]\s*[<>]?\s*\d+(?:\.\d+)?",
             text,
         )
         if table_row_match:
             return table_row_match.group("label").strip(), table_row_match.group("value").strip()
 
-        number_tail = re.match(r"^(.+?)\s+([+-]?\d+(?:\.\d+)?(?:\s*[A-Za-z%/μµ0-9²]+)?)$", text)
+        number_tail = re.match(r"^(.+?)\s+([+-]?\d+(?:\.\d+)?(?:\s*[A-Za-z%/μµ0-9²·⋅^⁻¹−-]+)?)$", text)
         if number_tail:
             return number_tail.group(1).strip(), number_tail.group(2).strip()
 
@@ -208,13 +280,21 @@ class HuaweiOCRProvider(OCRProvider):
         return cls.VALUE_ONLY_PATTERN.match(normalized) is not None
 
     @classmethod
+    def _is_result_value_line(cls, text: str) -> bool:
+        normalized = unicodedata.normalize("NFKC", text or "").strip()
+        return (
+            cls._is_value_like_line(normalized)
+            or cls.REFERENCE_VALUE_PATTERN.search(normalized) is not None
+        )
+
+    @classmethod
     def _is_label_like_line(cls, text: str) -> bool:
         normalized = (text or "").strip()
         if not normalized:
             return False
         if len(normalized) > 40:
             return False
-        if cls._is_value_like_line(normalized):
+        if cls._is_result_value_line(normalized):
             return False
         if normalized in {"检验结果", "检测结果", "结果"}:
             return False
@@ -235,104 +315,192 @@ class HuaweiOCRProvider(OCRProvider):
 
     @staticmethod
     def _detect_table_columns(row_map):
-        label_tokens = ["项目", "指标", "名称", "检查项", "检测项"]
-        value_tokens = ["结果", "数值", "检测值", "结果值", "值"]
+        primary_label_tokens = [
+            "检查项目",
+            "检验项目",
+            "检测项目",
+            "项目名称",
+            "指标名称",
+            "检查项",
+            "检验项",
+            "检测项",
+            "名称",
+        ]
+        secondary_label_tokens = ["项目", "指标"]
+        code_tokens = ["项目代码", "指标代码", "代码", "缩写", "英文名"]
+        value_tokens = ["检验结果", "检测结果", "检查结果", "结果值", "检测值", "测定值", "结果", "数值"]
 
         column_hits = {}
-        for row_index in sorted(row_map.keys())[:4]:
+        for row_index in sorted(row_map.keys()):
             for cell in row_map[row_index]:
                 text = HuaweiOCRProvider._normalize_cell_text(cell.get("text", ""))
                 if not text:
                     continue
-                stats = column_hits.setdefault(cell["col"], {"label": 0, "value": 0})
-                if any(token in text for token in label_tokens):
+                stats = column_hits.setdefault(
+                    cell["col"],
+                    {"label": 0, "value": 0, "value_like": 0, "label_like": 0},
+                )
+                if any(token in text for token in primary_label_tokens):
+                    stats["label"] += 5
+                if any(token in text for token in secondary_label_tokens):
+                    stats["label"] += 2
+                if any(token in text for token in code_tokens):
                     stats["label"] += 1
                 if any(token in text for token in value_tokens):
-                    stats["value"] += 1
+                    stats["value"] += 5
+                if HuaweiOCRProvider._is_result_value_line(cell.get("text", "")):
+                    stats["value_like"] += 1
+                elif HuaweiOCRProvider._is_label_like_line(cell.get("text", "")):
+                    stats["label_like"] += 1
 
         if not column_hits:
             return 0, 1
 
-        label_col = max(column_hits.items(), key=lambda item: (item[1]["label"], -item[0]))[0]
-        value_col = max(column_hits.items(), key=lambda item: (item[1]["value"], -item[0]))[0]
+        label_col = max(
+            column_hits.items(),
+            key=lambda item: (item[1]["label"], item[1]["label_like"], -item[0]),
+        )[0]
+        value_col = max(
+            column_hits.items(),
+            key=lambda item: (item[1]["value"], item[1]["value_like"], -item[0]),
+        )[0]
 
         if label_col == value_col:
-            value_col = 1 if label_col == 0 else label_col + 1
+            alternatives = [
+                (col, stats)
+                for col, stats in column_hits.items()
+                if col != label_col
+            ]
+            if alternatives:
+                value_col = max(
+                    alternatives,
+                    key=lambda item: (item[1]["value"], item[1]["value_like"], -item[0]),
+                )[0]
+            else:
+                value_col = 1 if label_col == 0 else label_col + 1
 
         return label_col, value_col
 
-    def _extract_fields(self, response_data):
-        rows = []
-        self._extract_cells(response_data, rows)
+    @classmethod
+    def _table_row_field(cls, cols, label_col, value_col):
+        col_text_map = {}
+        for cell in sorted(cols, key=lambda item: item["col"]):
+            text = str(cell.get("text") or "").strip()
+            if text and cell["col"] not in col_text_map:
+                col_text_map[cell["col"]] = text
+        if len(col_text_map) < 2:
+            return None
+
+        value = col_text_map.get(value_col)
+        if not value or not cls._is_result_value_line(value):
+            inferred_values = [
+                (col, text)
+                for col, text in sorted(col_text_map.items())
+                if col != label_col and cls._is_result_value_line(text)
+            ]
+            if inferred_values:
+                value_col, value = inferred_values[0]
+
+        if not value:
+            fallback_cols = [col for col in sorted(col_text_map) if col != label_col]
+            if fallback_cols:
+                value_col = fallback_cols[0]
+                value = col_text_map[value_col]
+
+        primary_label = col_text_map.get(label_col)
+        label_candidates = []
+        if primary_label:
+            label_candidates.append(primary_label)
+        for col, text in sorted(col_text_map.items()):
+            if col == value_col or text in label_candidates:
+                continue
+            if cls._is_label_like_line(text):
+                label_candidates.append(text)
+
+        if not label_candidates or not value:
+            return None
+        if cls._is_header_like(label_candidates[0], value):
+            return None
+
+        return {
+            "label": label_candidates[0],
+            "label_candidates": label_candidates[1:],
+            "value": value,
+            "source": "table",
+        }
+
+    @classmethod
+    def _parse_text_lines(cls, lines, source="text"):
+        normalized_lines = []
+        for line in lines:
+            for part in re.split(r"[\r\n]+", str(line)):
+                cleaned = part.strip()
+                if cleaned:
+                    normalized_lines.append(cleaned)
 
         fields = []
-        table_field_count = 0
+        line_index = 0
+        while line_index < len(normalized_lines):
+            line = normalized_lines[line_index]
+            label, value = cls._split_line_to_pair(line)
+            if label and value:
+                fields.append({"label": label, "value": value, "source": source})
+                line_index += 1
+                continue
 
-        if rows:
+            if line_index + 1 < len(normalized_lines):
+                next_line = normalized_lines[line_index + 1]
+                if cls._is_label_like_line(line) and cls._is_result_value_line(next_line):
+                    fields.append({"label": line, "value": next_line, "source": source})
+                    line_index += 2
+                    continue
+
+            line_index += 1
+        return fields
+
+    def _extract_fields(self, response_data):
+        fields = []
+        table_regions = []
+        self._extract_table_regions(response_data, table_regions)
+        if not table_regions:
+            fallback_cells = []
+            self._extract_cells(response_data, fallback_cells)
+            if fallback_cells:
+                table_regions.append(fallback_cells)
+
+        for rows in table_regions:
             row_map = {}
             for item in rows:
                 row_map.setdefault(item["row"], []).append(item)
 
             label_col, value_col = self._detect_table_columns(row_map)
-
             for row_index in sorted(row_map.keys()):
-                cols = sorted(row_map[row_index], key=lambda x: x["col"])
-                if len(cols) < 2:
+                field = self._table_row_field(row_map[row_index], label_col, value_col)
+                if field is not None:
+                    fields.append(field)
                     continue
+                # OCR engines sometimes merge only one row of an otherwise
+                # valid table into a single cell. Feed each failed row through
+                # the generic text parser instead of discarding it merely
+                # because sibling rows parsed successfully.
+                fields.extend(
+                    self._parse_text_lines(
+                        [
+                            item.get("text", "")
+                            for item in sorted(
+                                row_map[row_index],
+                                key=lambda value: value["col"],
+                            )
+                        ],
+                        source="table_text",
+                    )
+                )
 
-                col_text_map = {cell["col"]: cell["text"].strip() for cell in cols if cell.get("text", "").strip()}
-                if not col_text_map:
-                    continue
-
-                label = col_text_map.get(label_col)
-                if not label:
-                    label = col_text_map.get(min(col_text_map.keys()))
-
-                value = col_text_map.get(value_col)
-                if not value:
-                    fallback_cols = [col for col in sorted(col_text_map.keys()) if col != label_col]
-                    for col in fallback_cols:
-                        candidate = col_text_map.get(col)
-                        if candidate:
-                            value = candidate
-                            break
-
-                if label and value:
-                    if self._is_header_like(label, value):
-                        continue
-                    fields.append({"label": label, "value": value, "source": "table"})
-                    table_field_count += 1
-
-        # If table cells are already reliable, skip full-text fallback to avoid
-        # polluting with metadata and reference-range fragments.
-        if table_field_count < 3:
-            lines = []
-            self._extract_text_lines(response_data, lines)
-
-            normalized_lines = []
-            for line in lines:
-                for part in re.split(r"[\r\n]+", str(line)):
-                    cleaned = part.strip()
-                    if cleaned:
-                        normalized_lines.append(cleaned)
-
-            line_index = 0
-            while line_index < len(normalized_lines):
-                line = normalized_lines[line_index]
-                label, value = self._split_line_to_pair(line)
-                if label and value:
-                    fields.append({"label": label, "value": value, "source": "text"})
-                    line_index += 1
-                    continue
-
-                if line_index + 1 < len(normalized_lines):
-                    next_line = normalized_lines[line_index + 1]
-                    if self._is_label_like_line(line) and self._is_value_like_line(next_line):
-                        fields.append({"label": line, "value": next_line, "source": "text"})
-                        line_index += 2
-                        continue
-
-                line_index += 1
+        # Text and table regions are complementary. Always parse non-table text;
+        # a metadata table must never suppress clinical values in a text region.
+        lines = []
+        self._extract_text_lines(response_data, lines, skip_table_regions=True)
+        fields.extend(self._parse_text_lines(lines, source="text"))
 
         deduped = {}
         for field in fields:
@@ -398,7 +566,8 @@ class HuaweiOCRProvider(OCRProvider):
                 raise RuntimeError("pdf file has no pages")
 
             image_inputs = []
-            page_total = min(doc.page_count, self.pdf_max_pages)
+            document_page_count = doc.page_count
+            page_total = min(document_page_count, self.pdf_max_pages)
 
             for page_index in range(page_total):
                 page = doc.load_page(page_index)
@@ -406,14 +575,20 @@ class HuaweiOCRProvider(OCRProvider):
                 image_inputs.append((f"pdf_page_{page_index + 1}", pix.tobytes("png")))
 
             doc.close()
-            return image_inputs
+            return image_inputs, {
+                "pages_total": document_page_count,
+                "pages_truncated": document_page_count > page_total,
+            }
 
         with open(file_path, "rb") as f:
-            return [("single_image", f.read())]
+            return [("single_image", f.read())], {
+                "pages_total": 1,
+                "pages_truncated": False,
+            }
 
     def parse_report(self, file_path: str):
         try:
-            image_inputs = self._prepare_image_inputs(file_path)
+            image_inputs, input_meta = self._prepare_image_inputs(file_path)
         except OSError as exc:
             raise RuntimeError(f"cannot read report file: {exc}") from exc
         except RuntimeError:
@@ -451,8 +626,15 @@ class HuaweiOCRProvider(OCRProvider):
         fields = list(deduped_fields.values())
         raw_text = "\n".join([f"{item['label']}:{item['value']}" for item in fields])
 
+        empty_pages = [item["page"] for item in page_results if item["field_count"] == 0]
+        replacement_safe = (
+            not errors
+            and not empty_pages
+            and not input_meta.get("pages_truncated", False)
+        )
         return {
             "engine": "huawei_ocr_general_table",
+            "parser_version": self.PARSER_VERSION,
             "raw_text": raw_text,
             "fields": fields,
             "meta": {
@@ -462,13 +644,18 @@ class HuaweiOCRProvider(OCRProvider):
                 "pages_processed": len(image_inputs),
                 "pages_succeeded": len(page_results),
                 "pages_failed": len(errors),
+                "pages_empty": len(empty_pages),
+                "pages_total": input_meta.get("pages_total", len(image_inputs)),
+                "pages_truncated": bool(input_meta.get("pages_truncated", False)),
+                "replacement_safe": replacement_safe,
                 "errors": errors[:5],
-                "response_sample": page_results[0]["response"],
+                "parser_version": self.PARSER_VERSION,
             },
         }
 
 
 class OCRMappingService:
+    REVIEW_SCORE_THRESHOLD = 0.92
     BRACKET_CONTENT_PATTERN = re.compile(r"\([^)]*\)|（[^）]*）|\[[^\]]*\]|【[^】]*】")
     UNIT_TOKEN_PATTERN = re.compile(r"(mmol/?l|μmol/?l|umol/?l|mg/?dl|u/?l|kg/?m2|kg/m²|mmhg|%)", re.IGNORECASE)
     RANGE_VALUE_PATTERN = re.compile(r"^\s*[+-]?\d+(?:\.\d+)?\s*[-~至]\s*[+-]?\d+(?:\.\d+)?\s*$")
@@ -476,12 +663,23 @@ class OCRMappingService:
     NUMBER_PATTERN = re.compile(r"[-+]?\d+(?:\.\d+)?")
     NOISE_LABEL_KEYWORDS = {
         "报告编号",
+        "条码号",
+        "就诊号",
+        "门诊号",
         "姓名",
+        "受检人",
         "性别",
         "年龄",
         "检查日期",
+        "采样日期",
         "登记号",
         "体检机构",
+        "机构地址",
+        "送检科室",
+        "主检方向",
+        "审核医生",
+        "样本类型",
+        "报告状态",
         "医生建议",
         "结论",
         "建议",
@@ -493,6 +691,33 @@ class OCRMappingService:
         "结论摘要",
         "参考范围",
         "单位",
+        "备注",
+        "name",
+        "patient",
+        "patientname",
+        "sex",
+        "gender",
+        "age",
+        "examdate",
+        "sampledate",
+        "district",
+        "focus",
+        "doctor",
+        "physician",
+        "department",
+        "address",
+        "phone",
+        "telephone",
+        "mobile",
+        "status",
+        "reportno",
+        "reportnumber",
+        "visitno",
+        "visitnumber",
+        "barcode",
+        "sampletype",
+        "remark",
+        "summary",
     }
     NOISE_VALUE_KEYWORDS = {
         "建议",
@@ -563,8 +788,18 @@ class OCRMappingService:
         if not compact_label:
             return "empty_label"
 
-        if any(keyword in normalized_label for keyword in self.NOISE_LABEL_KEYWORDS):
-            return "metadata_label"
+        for keyword in self.NOISE_LABEL_KEYWORDS:
+            compact_keyword = self.normalize_key(keyword)
+            if not compact_keyword:
+                continue
+            if re.fullmatch(r"[a-z0-9]+", compact_keyword):
+                # English metadata words such as "age" are common letter
+                # fragments in legitimate test names (for example,
+                # "average glucose"). Only exact normalized labels are safe.
+                if compact_label == compact_keyword:
+                    return "metadata_label"
+            elif compact_keyword in compact_label:
+                return "metadata_label"
 
         if compact_label.isdigit() or self.NUMERIC_FRAGMENT_PATTERN.match(normalized_label):
             return "numeric_fragment_label"
@@ -585,20 +820,61 @@ class OCRMappingService:
 
     def _match_indicator(self, label: str, lookup):
         for reason, key, score in self._label_variants(label):
-            indicator_dict = lookup.get(key)
-            if indicator_dict is not None:
-                return indicator_dict, reason, score, key
+            matches = lookup.get(key) or []
+            if len(matches) == 1:
+                return matches[0], reason, score, key
+            if len(matches) > 1:
+                return None
+
+        # Some reports combine the short code and localized name in one cell
+        # (for example, "FBG - 空腹血糖"). Require two distinct delimited
+        # tokens to independently resolve to the same definition. Matching a
+        # single short token would reintroduce unsafe cases such as TG-Ab.
+        token_source = self._strip_unit_tokens(
+            self._strip_common_affixes(self._strip_bracket_content(label))
+        )
+        tokens = {
+            self.normalize_key(token)
+            for token in re.split(r"\s+|[-—–/／|｜]+", token_source)
+            if self.normalize_key(token)
+        }
+        token_matches = {}
+        for token in tokens:
+            matches = lookup.get(token) or []
+            if len(matches) != 1:
+                continue
+            indicator_dict = matches[0]
+            bucket = token_matches.setdefault(indicator_dict.id, [])
+            bucket.append((token, indicator_dict))
+        paired_matches = [items for items in token_matches.values() if len(items) >= 2]
+        if len(paired_matches) == 1:
+            matched_items = paired_matches[0]
+            return matched_items[0][1], "delimited_alias_pair", 0.96, matched_items[0][0]
 
         normalized_label = self.normalize_key(self._strip_unit_tokens(self._strip_common_affixes(self._strip_bracket_content(label))))
         if len(normalized_label) < 2:
             return None
 
+        # Medical abbreviations must be explicit aliases. Substring matching a
+        # short Latin code would turn TGAb into TG, UACR into UA, or ALTITUDE
+        # into ALT. Conservative matching is safer than silently filing a
+        # different laboratory measurement.
+        if re.fullmatch(r"[a-z0-9]+", normalized_label):
+            return None
+
         best_match = None
-        for key, indicator_dict in lookup.items():
+        for key, matches in lookup.items():
+            if len(matches) != 1:
+                continue
+            indicator_dict = matches[0]
             if len(key) < 2:
+                continue
+            if re.fullmatch(r"[a-z0-9]+", key):
                 continue
             if key in normalized_label or normalized_label in key:
                 ratio = min(len(key), len(normalized_label)) / max(len(key), len(normalized_label))
+                if ratio < 0.8:
+                    continue
                 score = 0.72 + 0.2 * ratio
                 if best_match is None or score > best_match[2]:
                     best_match = (indicator_dict, "contains_match", score, key)
@@ -627,14 +903,16 @@ class OCRMappingService:
             candidates = [item.code, item.name, *aliases]
             for candidate in candidates:
                 for _reason, normalized, _score in self._label_variants(candidate):
-                    if normalized and normalized not in lookup:
-                        lookup[normalized] = item
+                    if not normalized:
+                        continue
+                    matches = lookup.setdefault(normalized, [])
+                    if all(existing.id != item.id for existing in matches):
+                        matches.append(item)
         return lookup
 
     def map_fields(self, fields, indicator_dicts):
         lookup = self.build_lookup(indicator_dicts)
-        mapped_by_indicator = {}
-        candidate_mappings = []
+        raw_candidates_by_indicator = {}
         unmatched = []
         filtered = []
 
@@ -650,7 +928,22 @@ class OCRMappingService:
                 filtered.append({"label": label, "value": value, "reason": noise_reason})
                 continue
 
-            matched = self._match_indicator(label, lookup)
+            candidate_labels = [label]
+            for candidate_label in field.get("label_candidates") or []:
+                normalized_candidate = str(candidate_label or "").strip()
+                if normalized_candidate and normalized_candidate not in candidate_labels:
+                    candidate_labels.append(normalized_candidate)
+
+            matched = None
+            matched_label = label
+            for candidate_label in candidate_labels:
+                candidate_match = self._match_indicator(candidate_label, lookup)
+                if candidate_match is None:
+                    continue
+                if matched is None or candidate_match[2] > matched[2]:
+                    matched = candidate_match
+                    matched_label = candidate_label
+
             if matched is None:
                 unmatched.append({"label": label, "value": value})
                 continue
@@ -660,7 +953,7 @@ class OCRMappingService:
 
             candidate_payload = {
                 "field_index": field_index,
-                "label": label,
+                "label": matched_label,
                 "value": normalized_value,
                 "indicator_dict_id": indicator_dict.id,
                 "indicator_code": indicator_dict.code,
@@ -668,23 +961,89 @@ class OCRMappingService:
                 "reason": reason,
                 "score": round(float(score), 4),
                 "matched_key": matched_key,
+                "source": field.get("source", "unknown"),
             }
+            raw_candidates_by_indicator.setdefault(indicator_dict.id, []).append(
+                (candidate_payload, indicator_dict)
+            )
+
+        mapped = []
+        candidate_mappings = []
+        conflict_count = 0
+        review_required_count = 0
+        raw_candidate_count = sum(len(items) for items in raw_candidates_by_indicator.values())
+
+        for indicator_dict_id, raw_candidates in raw_candidates_by_indicator.items():
+            raw_candidates.sort(
+                key=lambda item: (
+                    -item[0]["score"],
+                    0 if item[0].get("source") == "table" else 1,
+                    item[0]["field_index"],
+                )
+            )
+            candidate_payload, indicator_dict = raw_candidates[0]
+            candidate_payload = dict(candidate_payload)
+
+            normalized_values = set()
+            for raw_candidate, _definition in raw_candidates:
+                try:
+                    comparison_value = normalize_ocr_indicator_value(
+                        indicator_dict,
+                        raw_candidate["value"],
+                    )
+                except IndicatorValueError:
+                    comparison_value = self._normalize_text(
+                        raw_candidate["value"]
+                    ).replace(" ", "")
+                if comparison_value:
+                    normalized_values.add(comparison_value)
+            conflict_values = list(dict.fromkeys(item[0]["value"] for item in raw_candidates))
+            has_conflict = len(normalized_values) > 1
+            if has_conflict:
+                conflict_count += 1
+                candidate_payload["conflict"] = True
+                candidate_payload["conflict_values"] = conflict_values
+                candidate_payload["reason"] = f"{candidate_payload['reason']}_value_conflict"
+                candidate_payload["score"] = min(
+                    candidate_payload["score"],
+                    self.REVIEW_SCORE_THRESHOLD - 0.01,
+                )
+
+            value_error = None
+            try:
+                normalize_ocr_indicator_value(indicator_dict, candidate_payload["value"])
+            except IndicatorValueError as exc:
+                value_error = str(exc)
+                candidate_payload["value_error"] = value_error
+                candidate_payload["score"] = min(
+                    candidate_payload["score"],
+                    self.REVIEW_SCORE_THRESHOLD - 0.01,
+                )
+
+            requires_review = (
+                has_conflict
+                or value_error is not None
+                or candidate_payload["score"] < self.REVIEW_SCORE_THRESHOLD
+            )
+            candidate_payload["requires_review"] = requires_review
+            if requires_review:
+                review_required_count += 1
+
             candidate_mappings.append(candidate_payload)
-
-            current_best = mapped_by_indicator.get(indicator_dict.id)
-            if current_best is None or candidate_payload["score"] > current_best["score"]:
-                mapped_by_indicator[indicator_dict.id] = {
+            mapped.append(
+                {
                     "indicator_dict": indicator_dict,
-                    "indicator_dict_id": indicator_dict.id,
-                    "label": label,
-                    "value": normalized_value,
-                    "reason": reason,
+                    "indicator_dict_id": indicator_dict_id,
+                    "label": candidate_payload["label"],
+                    "value": candidate_payload["value"],
+                    "reason": candidate_payload["reason"],
                     "score": candidate_payload["score"],
-                    "matched_key": matched_key,
-                    "field_index": field_index,
+                    "matched_key": candidate_payload["matched_key"],
+                    "field_index": candidate_payload["field_index"],
+                    "requires_review": requires_review,
                 }
+            )
 
-        mapped = list(mapped_by_indicator.values())
         mapped.sort(key=lambda item: (-item["score"], item["indicator_dict_id"]))
         candidate_mappings.sort(key=lambda item: (-item["score"], item["field_index"]))
 
@@ -692,8 +1051,11 @@ class OCRMappingService:
             "total_fields": len(fields or []),
             "filtered_count": len(filtered),
             "candidate_count": len(candidate_mappings),
+            "raw_candidate_count": raw_candidate_count,
             "mapped_unique_count": len(mapped),
             "unmatched_count": len(unmatched),
+            "conflict_count": conflict_count,
+            "review_required_count": review_required_count,
         }
 
         return {

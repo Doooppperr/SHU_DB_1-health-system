@@ -4,17 +4,25 @@ function normalizeIndicatorId(value) {
 }
 
 export function createOcrMappingRows(candidateMappings = []) {
-  return candidateMappings.map((item, index) => ({
-    row_id: `${item.field_index ?? index}-${item.indicator_dict_id ?? "unmatched"}`,
-    label: item.label,
-    value: item.value,
-    suggested_code: item.indicator_code,
-    suggested_name: item.indicator_name,
-    indicator_dict_id: normalizeIndicatorId(item.indicator_dict_id),
-    score: item.score,
-    reason: item.reason,
-    ignored: false,
-  }));
+  return candidateMappings.map((item, index) => {
+    const numericScore = Number(item.score);
+    const requiresReview = item.requires_review === true
+      || (Number.isFinite(numericScore) && numericScore < 0.92);
+    return {
+      row_id: `${item.field_index ?? index}-${item.indicator_dict_id ?? "unmatched"}`,
+      label: item.label,
+      value: item.value,
+      suggested_code: item.indicator_code,
+      suggested_name: item.indicator_name,
+      indicator_dict_id: normalizeIndicatorId(item.indicator_dict_id),
+      score: item.score,
+      reason: item.reason,
+      value_error: item.value_error || "",
+      conflict_values: item.conflict_values || [],
+      requires_review: requiresReview,
+      ignored: requiresReview,
+    };
+  });
 }
 
 export function buildOcrConfirmedMappings(rows = [], indicatorDicts = []) {

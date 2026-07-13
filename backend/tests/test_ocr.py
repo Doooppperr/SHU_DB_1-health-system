@@ -1,6 +1,7 @@
 import io
 import json
 from datetime import date
+from types import SimpleNamespace
 
 from sqlalchemy import update as sqlalchemy_update
 
@@ -49,7 +50,10 @@ def _set_auto_candidates(app, record_id, candidates):
     with app.app_context():
         record = db.session.get(HealthRecord, record_id)
         record.ocr_raw_text = json.dumps(
-            {"mapping": {"candidate_mappings": candidates}}
+            {
+                "meta": {"replacement_safe": True},
+                "mapping": {"candidate_mappings": candidates},
+            }
         )
         db.session.commit()
 
@@ -97,9 +101,438 @@ def test_extract_fields_supports_rows_columns_cells():
     fields = provider._extract_fields(response_data)
 
     field_pairs = {(item["label"], item["value"], item.get("source")) for item in fields}
-    assert ("BMI", "24.6", "table") in field_pairs
-    assert ("GLU", "7.2", "table") in field_pairs
-    assert ("TC", "5.8", "table") in field_pairs
+    assert ("体重指数", "24.6", "table") in field_pairs
+    assert ("空腹血糖", "7.2", "table") in field_pairs
+    assert ("总胆固醇", "5.8", "table") in field_pairs
+    bmi_field = next(item for item in fields if item["value"] == "24.6")
+    assert "BMI" in bmi_field["label_candidates"]
+
+
+def _provider_for_extract_tests():
+    return HuaweiOCRProvider(
+        endpoint="https://example.com",
+        ak="dummy-ak",
+        sk="dummy-sk",
+        project_id="dummy-project",
+        api_path="/v2/{project_id}/ocr/general-table",
+    )
+
+
+def _table_region(rows):
+    blocks = []
+    for row_index, values in enumerate(rows):
+        for col_index, value in enumerate(values):
+            blocks.append(
+                {
+                    "words": value,
+                    "rows": [row_index],
+                    "columns": [col_index],
+                }
+            )
+    return {"type": "table", "words_block_list": blocks}
+
+
+def test_extract_fields_keeps_text_labs_when_metadata_table_has_many_rows():
+    provider = _provider_for_extract_tests()
+    response_data = {
+        "result": {
+            "words_region_list": [
+                _table_region(
+                    [
+                        ["姓名", "匿名用户"],
+                        ["年龄", "30"],
+                        ["报告状态", "已审核"],
+                    ]
+                ),
+                {
+                    "type": "text",
+                    "words_block_list": [
+                        {"words": "空腹血糖"},
+                        {"words": "6.8 mmol/L"},
+                        {"words": "肌酐"},
+                        {"words": "79 μmol/L"},
+                    ],
+                },
+            ]
+        }
+    }
+
+    fields = provider._extract_fields(response_data)
+    pairs = {(item["label"], item["value"]) for item in fields}
+
+    assert ("空腹血糖", "6.8 mmol/L") in pairs
+    assert ("肌酐", "79 μmol/L") in pairs
+
+
+def test_extract_fields_isolates_multiple_table_regions_and_is_order_independent():
+    provider = _provider_for_extract_tests()
+    glucose_table = _table_region(
+        [["项目", "结果"], ["空腹血糖", "6.8"], ["总胆固醇", "5.4"]]
+    )
+    liver_table = _table_region(
+        [["项目", "结果"], ["ALT", "41"], ["AST", "29"]]
+    )
+
+    expected = {
+        ("空腹血糖", "6.8"),
+        ("总胆固醇", "5.4"),
+        ("ALT", "41"),
+        ("AST", "29"),
+    }
+    for regions in ([glucose_table, liver_table], [liver_table, glucose_table]):
+        fields = provider._extract_fields(
+            {"result": {"words_region_list": regions}}
+        )
+        pairs = {(item["label"], item["value"]) for item in fields}
+        assert expected <= pairs
+
+
+def test_extract_fields_detects_header_after_metadata_rows():
+    provider = _provider_for_extract_tests()
+    response_data = {
+        "result": {
+            "words_region_list": [
+                _table_region(
+                    [
+                        ["报告编号", "SYNTHETIC-001"],
+                        ["受检人", "匿名用户"],
+                        ["样本类型", "血清"],
+                        ["审核状态", "已审核"],
+                        ["检查项目", "检验结果"],
+                        ["空腹血糖", "6.8 mmol/L"],
+                    ]
+                )
+            ]
+        }
+    }
+
+    fields = provider._extract_fields(response_data)
+
+    assert any(
+        item["label"] == "空腹血糖" and item["value"] == "6.8 mmol/L"
+        for item in fields
+    )
+
+
+def test_extract_fields_accepts_inverse_litre_units_in_adjacent_text():
+    provider = _provider_for_extract_tests()
+    response_data = {
+        "result": {
+            "words_region_list": [
+                {
+                    "type": "text",
+                    "words_block_list": [
+                        {"words": "空腹血糖"},
+                        {"words": "6.8 mmol·L-1"},
+                        {"words": "总胆固醇"},
+                        {"words": "5.4 mmol⋅L−1"},
+                    ],
+                }
+            ]
+        }
+    }
+
+    pairs = {
+        (item["label"], item["value"])
+        for item in provider._extract_fields(response_data)
+    }
+
+    assert ("空腹血糖", "6.8 mmol·L-1") in pairs
+    assert ("总胆固醇", "5.4 mmol⋅L−1") in pairs
+
+
+def test_extract_fields_keeps_code_name_and_value_in_multicolumn_text_lines():
+    provider = _provider_for_extract_tests()
+    response_data = {
+        "result": {
+            "words_region_list": [
+                {
+                    "type": "text",
+                    "words_block_list": [
+                        {"words": "FBG  空腹血糖  6.8 mmol/L(reference 3.9-6.1)"},
+                        {"words": "TC\t总胆固醇\t5.4 mmol/L"},
+                        {"words": "TG | 甘油三酯 | 1.9 mmol/L"},
+                    ],
+                }
+            ]
+        }
+    }
+
+    pairs = {
+        (item["label"], item["value"])
+        for item in provider._extract_fields(response_data)
+    }
+
+    assert ("FBG - 空腹血糖", "6.8 mmol/L(reference 3.9-6.1)") in pairs
+    assert ("TC - 总胆固醇", "5.4 mmol/L") in pairs
+    assert ("TG - 甘油三酯", "1.9 mmol/L") in pairs
+
+
+def test_extract_fields_recovers_a_single_merged_table_row_without_cross_row_pairing():
+    provider = _provider_for_extract_tests()
+    table = _table_region(
+        [["检查项目", "检验结果"], ["空腹血糖", "6.8 mmol/L"]]
+    )
+    table["words_block_list"].extend(
+        [
+            {"words": "肌酐 79 μmol/L", "rows": [2], "columns": [0]},
+            {"words": "总胆固醇", "rows": [3], "columns": [0]},
+            {"words": "5.4 mmol/L", "rows": [4], "columns": [1]},
+        ]
+    )
+
+    pairs = {
+        (item["label"], item["value"])
+        for item in provider._extract_fields(
+            {"result": {"words_region_list": [table]}}
+        )
+    }
+
+    assert ("空腹血糖", "6.8 mmol/L") in pairs
+    assert ("肌酐", "79 μmol/L") in pairs
+    assert ("总胆固醇", "5.4 mmol/L") not in pairs
+
+
+def test_headerless_table_prefers_result_before_single_bound_reference():
+    provider = _provider_for_extract_tests()
+    fields = provider._extract_fields(
+        {
+            "result": {
+                "words_region_list": [
+                    _table_region(
+                        [
+                            ["FBG", "空腹血糖", "6.8", "<7.0"],
+                            ["TC", "总胆固醇", "5.4", "<5.2"],
+                        ]
+                    )
+                ]
+            }
+        }
+    )
+
+    by_label = {item["label"]: item["value"] for item in fields}
+    assert by_label == {"FBG": "6.8", "TC": "5.4"}
+
+
+def test_extract_fields_infers_headerless_code_name_value_table():
+    provider = _provider_for_extract_tests()
+    response_data = {
+        "result": {
+            "words_region_list": [
+                _table_region(
+                    [
+                        ["FBG", "空腹血糖", "6.8", "mmol/L"],
+                        ["CREA", "肌酐", "79", "μmol/L"],
+                    ]
+                )
+            ]
+        }
+    }
+
+    fields = provider._extract_fields(response_data)
+    by_value = {item["value"]: item for item in fields}
+
+    assert by_value["6.8"]["label"] == "FBG"
+    assert "空腹血糖" in by_value["6.8"]["label_candidates"]
+    assert by_value["79"]["label"] == "CREA"
+
+
+def test_mapping_does_not_fuzzy_match_other_medical_abbreviations():
+    service = OCRMappingService()
+    definitions = [
+        SimpleNamespace(
+            id=1,
+            code="TG",
+            name="甘油三酯",
+            aliases=["TG", "甘油三酯"],
+            value_type="numeric",
+            unit="mmol/L",
+        ),
+        SimpleNamespace(
+            id=2,
+            code="UA",
+            name="尿酸",
+            aliases=["UA", "尿酸"],
+            value_type="numeric",
+            unit="μmol/L",
+        ),
+    ]
+
+    mapping = service.map_fields(
+        [
+            {"label": "TGAb", "value": "12 IU/mL"},
+            {"label": "UACR", "value": "30 mg/g"},
+            {"label": "ALTITUDE", "value": "100"},
+        ],
+        definitions,
+    )
+
+    assert mapping["candidate_mappings"] == []
+    assert {item["label"] for item in mapping["unmatched"]} == {
+        "TGAb",
+        "UACR",
+        "ALTITUDE",
+    }
+
+
+def test_english_metadata_filter_does_not_use_partial_word_matches():
+    service = OCRMappingService()
+
+    mapping = service.map_fields(
+        [
+            {"label": "Patient Name", "value": "Synthetic User"},
+            {"label": "Average glucose", "value": "6.2 mmol/L"},
+        ],
+        [],
+    )
+
+    assert [item["label"] for item in mapping["filtered"]] == ["Patient Name"]
+    assert [item["label"] for item in mapping["unmatched"]] == ["Average glucose"]
+
+
+def test_mapping_leaves_ambiguous_alias_unmatched():
+    service = OCRMappingService()
+    definitions = [
+        SimpleNamespace(
+            id=1,
+            code="A1",
+            name="合成指标一",
+            aliases=["共享别名"],
+            value_type="numeric",
+            unit="U/L",
+        ),
+        SimpleNamespace(
+            id=2,
+            code="A2",
+            name="合成指标二",
+            aliases=["共享别名"],
+            value_type="numeric",
+            unit="U/L",
+        ),
+    ]
+
+    mapping = service.map_fields(
+        [{"label": "共享别名", "value": "12 U/L"}],
+        definitions,
+    )
+
+    assert mapping["candidate_mappings"] == []
+    assert mapping["unmatched"] == [{"label": "共享别名", "value": "12 U/L"}]
+
+
+def test_mapping_accepts_code_and_name_pair_but_not_single_short_token():
+    service = OCRMappingService()
+    definitions = [
+        SimpleNamespace(
+            id=1,
+            code="FBG",
+            name="空腹血糖",
+            aliases=["GLU"],
+            value_type="numeric",
+            unit="mmol/L",
+        ),
+        SimpleNamespace(
+            id=2,
+            code="TG",
+            name="甘油三酯",
+            aliases=[],
+            value_type="numeric",
+            unit="mmol/L",
+        ),
+    ]
+
+    mapping = service.map_fields(
+        [
+            {"label": "FBG - 空腹血糖", "value": "6.8 mmol/L"},
+            {"label": "FBG 空腹血糖", "value": "6.9 mmol/L"},
+            {"label": "空腹血糖 / FBG", "value": "7.0 mmol/L"},
+            {"label": "TG-Ab", "value": "12 IU/mL"},
+        ],
+        definitions,
+    )
+
+    assert len(mapping["candidate_mappings"]) == 1
+    assert mapping["candidate_mappings"][0]["indicator_code"] == "FBG"
+    assert mapping["candidate_mappings"][0]["conflict"] is True
+    assert [item["label"] for item in mapping["unmatched"]] == ["TG-Ab"]
+
+
+def test_parse_report_marks_failed_or_truncated_pages_unsafe(monkeypatch):
+    response_data = {
+        "result": {
+            "words_region_list": [
+                {"type": "text", "words_block_list": [{"words": "FBG: 6.8"}]}
+            ]
+        }
+    }
+    provider = _provider_for_extract_tests()
+    monkeypatch.setattr(
+        provider,
+        "_prepare_image_inputs",
+        lambda _path: (
+            [("pdf_page_1", b"ok"), ("pdf_page_2", b"bad")],
+            {"pages_total": 2, "pages_truncated": False},
+        ),
+    )
+
+    def request_page(image_bytes):
+        if image_bytes == b"bad":
+            raise RuntimeError("synthetic page failure")
+        return 200, response_data
+
+    monkeypatch.setattr(provider, "_request_ocr", request_page)
+    failed_result = provider.parse_report("synthetic.pdf")
+
+    assert failed_result["meta"]["pages_failed"] == 1
+    assert failed_result["meta"]["replacement_safe"] is False
+
+    truncated_provider = _provider_for_extract_tests()
+    monkeypatch.setattr(
+        truncated_provider,
+        "_prepare_image_inputs",
+        lambda _path: (
+            [("pdf_page_1", b"ok")],
+            {"pages_total": 2, "pages_truncated": True},
+        ),
+    )
+    monkeypatch.setattr(
+        truncated_provider,
+        "_request_ocr",
+        lambda _image: (200, response_data),
+    )
+    truncated_result = truncated_provider.parse_report("synthetic.pdf")
+
+    assert truncated_result["meta"]["pages_truncated"] is True
+    assert truncated_result["meta"]["replacement_safe"] is False
+
+
+def test_parse_report_marks_successful_but_empty_page_unsafe(monkeypatch):
+    provider = _provider_for_extract_tests()
+    monkeypatch.setattr(
+        provider,
+        "_prepare_image_inputs",
+        lambda _path: (
+            [("pdf_page_1", b"with-fields"), ("pdf_page_2", b"empty")],
+            {"pages_total": 2, "pages_truncated": False},
+        ),
+    )
+
+    def request_page(image_bytes):
+        if image_bytes == b"empty":
+            return 200, {"result": {"words_region_list": []}}
+        return 200, {
+            "result": {
+                "words_region_list": [
+                    {"type": "text", "words_block_list": [{"words": "FBG: 6.8"}]}
+                ]
+            }
+        }
+
+    monkeypatch.setattr(provider, "_request_ocr", request_page)
+    result = provider.parse_report("synthetic.pdf")
+
+    assert result["meta"]["pages_empty"] == 1
+    assert result["meta"]["replacement_safe"] is False
 
 
 def test_extract_fields_supports_adjacent_label_value_lines():
@@ -181,6 +614,66 @@ def test_upload_ocr_parse_and_auto_confirm_flow(client, app):
         assert record.status == "confirmed"
         indicators = HealthIndicator.query.filter_by(record_id=record_id).all()
         assert len(indicators) >= 3
+
+
+def test_auto_confirm_never_accepts_requires_review_when_threshold_is_lowered(client, app):
+    username = "ocr_auto_review_user"
+    headers = _auth_headers(client, username)
+    record_id = _create_parsed_record(app, username)
+    with app.app_context():
+        fbg_id = IndicatorDict.query.filter_by(code="FBG").one().id
+    _set_auto_candidates(
+        app,
+        record_id,
+        [
+            {
+                "indicator_dict_id": fbg_id,
+                "value": "6.8",
+                "score": 0.91,
+                "requires_review": True,
+            }
+        ],
+    )
+    app.config["OCR_AUTO_CONFIRM_MIN_SCORE"] = 0.5
+
+    response = client.put(f"/api/records/{record_id}/confirm", headers=headers)
+
+    assert response.status_code == 200
+    assert response.get_json()["ocr"]["confirmed_count"] == 0
+    with app.app_context():
+        assert HealthIndicator.query.filter_by(record_id=record_id).count() == 0
+
+
+def test_incomplete_new_ocr_record_requires_explicit_confirmation(client, app):
+    username = "ocr_incomplete_new_user"
+    headers = _auth_headers(client, username)
+    record_id = _create_parsed_record(app, username)
+    with app.app_context():
+        fbg_id = IndicatorDict.query.filter_by(code="FBG").one().id
+    _set_auto_candidates(
+        app,
+        record_id,
+        [{"indicator_dict_id": fbg_id, "value": "6.8", "score": 1.0}],
+    )
+    with app.app_context():
+        record = db.session.get(HealthRecord, record_id)
+        snapshot = json.loads(record.ocr_raw_text)
+        snapshot["meta"]["replacement_safe"] = False
+        snapshot["meta"]["pages_empty"] = 1
+        record.ocr_raw_text = json.dumps(snapshot)
+        db.session.commit()
+
+    blocked = client.put(f"/api/records/{record_id}/confirm", headers=headers)
+    assert blocked.status_code == 400
+    assert blocked.get_json()["code"] == "OCR_INCOMPLETE_CONFIRMATION_REQUIRED"
+
+    accepted = client.put(
+        f"/api/records/{record_id}/confirm",
+        json={"accept_incomplete_ocr": True},
+        headers=headers,
+    )
+    assert accepted.status_code == 200
+    assert accepted.get_json()["ocr"]["confirmed_count"] == 1
 
 
 def test_upload_ocr_can_attach_to_an_existing_manual_record(client, app, tmp_path):
@@ -281,6 +774,192 @@ def test_upload_ocr_can_attach_to_an_existing_manual_record(client, app, tmp_pat
 
     assert pending_report.is_file()
     assert not previous_report.exists()
+
+
+def test_attach_can_replace_old_ocr_indicators_while_preserving_manual_rows(
+    client,
+    app,
+    tmp_path,
+):
+    app.config["UPLOAD_DIR"] = str(tmp_path)
+    headers = _auth_headers(client, "ocr_replace_user")
+    record_id = client.post(
+        "/api/records",
+        json={"exam_date": "2026-04-15", "status": "confirmed"},
+        headers=headers,
+    ).get_json()["item"]["id"]
+
+    with app.app_context():
+        bmi_id = IndicatorDict.query.filter_by(code="BMI").one().id
+        ast_id = IndicatorDict.query.filter_by(code="AST").one().id
+        db.session.add_all(
+            [
+                HealthIndicator(
+                    record_id=record_id,
+                    indicator_dict_id=bmi_id,
+                    value="24.6",
+                    is_abnormal=True,
+                    source="ocr",
+                ),
+                HealthIndicator(
+                    record_id=record_id,
+                    indicator_dict_id=ast_id,
+                    value="35",
+                    is_abnormal=False,
+                    source="manual",
+                ),
+            ]
+        )
+        db.session.commit()
+
+    upload_response = client.post(
+        "/api/records/upload",
+        data={
+            "record_id": str(record_id),
+            "file": (io.BytesIO(b"new report"), "new-report.pdf"),
+        },
+        headers=headers,
+        content_type="multipart/form-data",
+    )
+    assert upload_response.status_code == 200
+    upload_payload = upload_response.get_json()
+    assert upload_payload["ocr"]["replacement_safe"] is True
+
+    confirmed_mappings = [
+        {
+            "indicator_dict_id": item["indicator_dict_id"],
+            "value": item["value"],
+            "score": item["score"],
+        }
+        for item in upload_payload["ocr"]["candidate_mappings"]
+    ]
+    confirm_response = client.put(
+        f"/api/records/{record_id}/confirm",
+        json={
+            "attachment_id": upload_payload["ocr"]["attachment_id"],
+            "confirmed_mappings": confirmed_mappings,
+            "ocr_update_mode": "replace_ocr",
+        },
+        headers=headers,
+    )
+
+    assert confirm_response.status_code == 200
+    confirm_payload = confirm_response.get_json()
+    assert confirm_payload["ocr"]["update_mode"] == "replace_ocr"
+    assert confirm_payload["ocr"]["removed_ocr_count"] == 1
+
+    with app.app_context():
+        stored = HealthIndicator.query.filter_by(record_id=record_id).all()
+        by_code = {item.indicator_dict.code: item for item in stored}
+        assert "BMI" not in by_code
+        assert by_code["AST"].value == "35"
+        assert by_code["AST"].source == "manual"
+        assert {"FBG", "TC", "ALT", "UA"} <= set(by_code)
+
+
+def test_incomplete_ocr_attachment_cannot_replace_but_can_merge(
+    client,
+    app,
+    tmp_path,
+):
+    app.config["UPLOAD_DIR"] = str(tmp_path)
+    headers = _auth_headers(client, "ocr_incomplete_user")
+    record_id = client.post(
+        "/api/records",
+        json={"exam_date": "2026-04-15", "status": "confirmed"},
+        headers=headers,
+    ).get_json()["item"]["id"]
+    upload_payload = client.post(
+        "/api/records/upload",
+        data={
+            "record_id": str(record_id),
+            "file": (io.BytesIO(b"partial report"), "partial.pdf"),
+        },
+        headers=headers,
+        content_type="multipart/form-data",
+    ).get_json()
+    confirmed_mappings = [
+        {
+            "indicator_dict_id": item["indicator_dict_id"],
+            "value": item["value"],
+            "score": item["score"],
+        }
+        for item in upload_payload["ocr"]["candidate_mappings"]
+    ]
+
+    with app.app_context():
+        record = db.session.get(HealthRecord, record_id)
+        snapshot = json.loads(record.ocr_raw_text)
+        snapshot["meta"]["replacement_safe"] = False
+        snapshot["meta"]["pages_failed"] = 1
+        record.ocr_raw_text = json.dumps(snapshot, ensure_ascii=False)
+        db.session.commit()
+
+    unsafe_response = client.put(
+        f"/api/records/{record_id}/confirm",
+        json={
+            "attachment_id": upload_payload["ocr"]["attachment_id"],
+            "confirmed_mappings": confirmed_mappings,
+            "ocr_update_mode": "replace_ocr",
+        },
+        headers=headers,
+    )
+    assert unsafe_response.status_code == 409
+    assert unsafe_response.get_json()["code"] == "OCR_REPLACE_UNSAFE"
+
+    merge_response = client.put(
+        f"/api/records/{record_id}/confirm",
+        json={
+            "attachment_id": upload_payload["ocr"]["attachment_id"],
+            "confirmed_mappings": confirmed_mappings,
+            "ocr_update_mode": "merge",
+        },
+        headers=headers,
+    )
+    assert merge_response.status_code == 200
+    assert merge_response.get_json()["ocr"]["update_mode"] == "merge"
+
+
+def test_replace_requires_every_mapped_candidate_to_be_reviewed(client, app, tmp_path):
+    app.config["UPLOAD_DIR"] = str(tmp_path)
+    headers = _auth_headers(client, "ocr_review_all_user")
+    record_id = client.post(
+        "/api/records",
+        json={"exam_date": "2026-04-15", "status": "confirmed"},
+        headers=headers,
+    ).get_json()["item"]["id"]
+    upload_payload = client.post(
+        "/api/records/upload",
+        data={
+            "record_id": str(record_id),
+            "file": (io.BytesIO(b"review report"), "review.pdf"),
+        },
+        headers=headers,
+        content_type="multipart/form-data",
+    ).get_json()
+    first_candidate = upload_payload["ocr"]["candidate_mappings"][0]
+
+    response = client.put(
+        f"/api/records/{record_id}/confirm",
+        json={
+            "attachment_id": upload_payload["ocr"]["attachment_id"],
+            "confirmed_mappings": [
+                {
+                    "indicator_dict_id": first_candidate["indicator_dict_id"],
+                    "value": first_candidate["value"],
+                    "score": first_candidate["score"],
+                }
+            ],
+            "ocr_update_mode": "replace_ocr",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["code"] == "OCR_REPLACE_REVIEW_REQUIRED"
+    with app.app_context():
+        record = db.session.get(HealthRecord, record_id)
+        assert record.ocr_pending_confirmation is True
 
 
 def test_failed_attach_confirmation_keeps_the_original_record_and_report(client, app, tmp_path):

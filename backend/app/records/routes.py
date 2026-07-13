@@ -153,6 +153,7 @@ def _validate_institution_package(institution_id, package_id):
 def _build_ocr_snapshot(ocr_result: dict, mapping: dict):
     return {
         "engine": ocr_result.get("engine", "unknown"),
+        "parser_version": ocr_result.get("parser_version", "unknown"),
         "raw_text": ocr_result.get("raw_text"),
         "fields": ocr_result.get("fields", []),
         "meta": ocr_result.get("meta", {}),
@@ -178,6 +179,39 @@ def _parse_ocr_snapshot(raw_text):
 
 def _load_ocr_snapshot(record: HealthRecord):
     return _parse_ocr_snapshot(record.ocr_raw_text)
+
+
+def _ocr_replacement_safe(snapshot: dict):
+    meta = snapshot.get("meta") if isinstance(snapshot, dict) else None
+    return isinstance(meta, dict) and meta.get("replacement_safe") is True
+
+
+def _ocr_page_metadata(snapshot: dict):
+    meta = snapshot.get("meta") if isinstance(snapshot, dict) else None
+    meta = meta if isinstance(meta, dict) else {}
+    return {
+        "pages_total": meta.get("pages_total"),
+        "pages_processed": meta.get("pages_processed"),
+        "pages_succeeded": meta.get("pages_succeeded"),
+        "pages_failed": meta.get("pages_failed"),
+        "pages_empty": meta.get("pages_empty"),
+        "pages_truncated": bool(meta.get("pages_truncated", False)),
+        "replacement_safe": _ocr_replacement_safe(snapshot),
+    }
+
+
+def _snapshot_candidate_count(snapshot: dict):
+    mapping = snapshot.get("mapping") if isinstance(snapshot, dict) else None
+    candidates = mapping.get("candidate_mappings") if isinstance(mapping, dict) else None
+    if not isinstance(candidates, list):
+        return 0
+    return sum(
+        1
+        for item in candidates
+        if isinstance(item, dict)
+        and _parse_optional_int(item.get("indicator_dict_id")) is not None
+        and str(item.get("value") or "").strip()
+    )
 
 
 def _pending_attachment(snapshot: dict):
@@ -243,6 +277,8 @@ def _resolve_auto_confirmed_mappings(record: HealthRecord):
             score = 0.0
 
         if indicator_dict_id is None or value is None or str(value).strip() == "":
+            continue
+        if candidate.get("requires_review") is True:
             continue
         if score < threshold:
             continue
@@ -315,6 +351,22 @@ def _upsert_ocr_indicators(record: HealthRecord, confirmed_mappings):
         changed_count += 1
 
     return changed_count, invalid_ids, invalid_values
+
+
+def _remove_stale_ocr_indicators(record: HealthRecord, confirmed_mappings):
+    """Replace prior OCR data without deleting unrelated manual entries."""
+    confirmed_ids = {
+        item["indicator_dict_id"]
+        for item in confirmed_mappings
+        if item.get("indicator_dict_id") is not None
+    }
+    query = HealthIndicator.query.filter_by(record_id=record.id, source="ocr")
+    if confirmed_ids:
+        query = query.filter(~HealthIndicator.indicator_dict_id.in_(confirmed_ids))
+    stale_rows = query.all()
+    for item in stale_rows:
+        db.session.delete(item)
+    return len(stale_rows)
 
 
 @records_bp.get("/summary")
@@ -602,10 +654,12 @@ def upload_record_and_parse():
     if previous_pending_report_url and previous_pending_report_url != saved_file["url"]:
         delete_report_urls([previous_pending_report_url])
 
+    ocr_page_metadata = _ocr_page_metadata(ocr_snapshot)
     return {
         "item": record.to_dict(include_indicators=True),
         "ocr": {
             "provider": ocr_result.get("engine", "unknown"),
+            "parser_version": ocr_result.get("parser_version", "unknown"),
             "mapped_count": len(mapping["mapped"]),
             "unmatched_count": len(mapping["unmatched"]),
             "unmatched_fields": mapping["unmatched"],
@@ -615,6 +669,7 @@ def upload_record_and_parse():
             "diagnostics": mapping.get("diagnostics", {}),
             "pending_confirmation": target_record is not None,
             "attachment_id": attachment_id,
+            **ocr_page_metadata,
         },
     }, 200 if target_record is not None else 201
 
@@ -641,6 +696,19 @@ def confirm_record(record_id: int):
         return {"message": "record status cannot be confirmed"}, 400
 
     payload = request.get_json(silent=True) or {}
+    is_new_ocr_confirmation = (
+        pending_attachment is None
+        and isinstance(snapshot.get("mapping"), dict)
+    )
+    if (
+        is_new_ocr_confirmation
+        and not _ocr_replacement_safe(snapshot)
+        and payload.get("accept_incomplete_ocr") is not True
+    ):
+        return {
+            "message": "OCR result may be incomplete; explicit confirmation is required",
+            "code": "OCR_INCOMPLETE_CONFIRMATION_REQUIRED",
+        }, 400
     if pending_attachment is not None:
         requested_attachment_id = payload.get("attachment_id") if isinstance(payload, dict) else None
         if (
@@ -652,6 +720,11 @@ def confirm_record(record_id: int):
                 "code": "OCR_ATTACHMENT_STALE",
             }, 409
     raw_confirmed_mappings = payload.get("confirmed_mappings") if isinstance(payload, dict) else None
+    ocr_update_mode = payload.get("ocr_update_mode", "merge") if isinstance(payload, dict) else "merge"
+    if ocr_update_mode not in {"merge", "replace_ocr"}:
+        return {"message": "ocr_update_mode must be merge or replace_ocr"}, 400
+    if ocr_update_mode == "replace_ocr" and pending_attachment is None:
+        return {"message": "replace_ocr is only available for a pending OCR attachment"}, 400
 
     try:
         confirmed_mappings = _normalize_confirmed_mappings(raw_confirmed_mappings)
@@ -664,6 +737,24 @@ def confirm_record(record_id: int):
     else:
         auto_threshold = None
         confirm_source = "manual_selection"
+
+    if ocr_update_mode == "replace_ocr" and not confirmed_mappings:
+        return {
+            "message": "replace_ocr requires at least one confirmed mapping",
+        }, 400
+    if ocr_update_mode == "replace_ocr" and not _ocr_replacement_safe(snapshot):
+        return {
+            "message": "this OCR result is incomplete and cannot safely replace existing OCR indicators",
+            "code": "OCR_REPLACE_UNSAFE",
+        }, 409
+    if (
+        ocr_update_mode == "replace_ocr"
+        and len(confirmed_mappings) != _snapshot_candidate_count(snapshot)
+    ):
+        return {
+            "message": "review every mapped OCR candidate before replacing existing OCR indicators",
+            "code": "OCR_REPLACE_REVIEW_REQUIRED",
+        }, 400
 
     changed_count, invalid_ids, invalid_values = _upsert_ocr_indicators(
         record,
@@ -678,6 +769,10 @@ def confirm_record(record_id: int):
             "message": "some indicator values are invalid",
             "invalid_indicator_values": invalid_values,
         }, 400
+
+    removed_ocr_count = 0
+    if ocr_update_mode == "replace_ocr":
+        removed_ocr_count = _remove_stale_ocr_indicators(record, confirmed_mappings)
 
     previous_report_url = None
     if pending_attachment is not None:
@@ -723,6 +818,8 @@ def confirm_record(record_id: int):
         "ocr": {
             "confirm_source": confirm_source,
             "confirmed_count": changed_count,
+            "update_mode": ocr_update_mode,
+            "removed_ocr_count": removed_ocr_count,
         },
     }
     if auto_threshold is not None:
@@ -752,10 +849,12 @@ def get_pending_ocr_attachment(record_id: int):
     candidates = mapping.get("candidate_mappings") or []
     unmatched = mapping.get("unmatched") or []
     filtered = mapping.get("filtered") or []
+    ocr_page_metadata = _ocr_page_metadata(snapshot)
     return {
         "item": record.to_dict(include_indicators=True),
         "ocr": {
             "provider": snapshot.get("engine", "unknown"),
+            "parser_version": snapshot.get("parser_version", "unknown"),
             "mapped_count": len(candidates),
             "unmatched_count": len(unmatched),
             "unmatched_fields": unmatched,
@@ -765,6 +864,7 @@ def get_pending_ocr_attachment(record_id: int):
             "diagnostics": mapping.get("diagnostics", {}),
             "pending_confirmation": True,
             "attachment_id": attachment_id,
+            **ocr_page_metadata,
         },
     }, 200
 

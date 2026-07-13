@@ -119,4 +119,35 @@ describe("OCR confirmation payload normalization", () => {
     expect(result.invalidRows).toEqual([]);
     expect(result.mappings[0].value).toBe("0");
   });
+
+  it("defaults low-confidence or conflicting suggestions to ignored", () => {
+    const rows = createOcrMappingRows([
+      {
+        field_index: 1,
+        label: "TGAb",
+        value: "12",
+        indicator_dict_id: 2,
+        score: 0.82,
+      },
+      {
+        field_index: 2,
+        label: "空腹血糖",
+        value: "6.8",
+        indicator_dict_id: 2,
+        score: 1,
+        requires_review: true,
+        conflict_values: ["6.8", "7.1"],
+      },
+      {
+        field_index: 3,
+        label: "尿酸",
+        value: "389",
+        indicator_dict_id: 9,
+        score: 1,
+      },
+    ]);
+
+    expect(rows.map((row) => row.ignored)).toEqual([true, true, false]);
+    expect(rows[1].conflict_values).toEqual(["6.8", "7.1"]);
+  });
 });
