@@ -5,6 +5,8 @@ import time
 import pytest
 import requests
 from sqlalchemy import event
+from waitress.task import hop_by_hop
+from werkzeug.test import EnvironBuilder
 
 from app.ai.service import (
     AiCompletion,
@@ -962,3 +964,45 @@ def test_client_disconnect_closes_active_provider_stream(client, monkeypatch):
     response.close()
 
     assert closed is True
+
+
+def test_sse_response_headers_are_accepted_by_waitress_start_response(
+    client, app
+):
+    headers, _user_id = _register(client, "ai_waitress_sse")
+    builder = EnvironBuilder(
+        path="/api/ai/chat/stream",
+        method="POST",
+        headers=headers,
+        json={"message": "请解释空腹血糖的含义", "history": []},
+    )
+    environ = builder.get_environ()
+    captured = {}
+
+    def waitress_compatible_start_response(status, response_headers, exc_info=None):
+        del exc_info
+        for name, _value in response_headers:
+            if name.lower() in hop_by_hop:
+                raise AssertionError(
+                    f'{name} is a "hop-by-hop" header; it cannot be used by a WSGI application'
+                )
+        captured["status"] = status
+        captured["headers"] = response_headers
+
+        def write(_data):
+            return None
+
+        return write
+
+    app_iter = app.wsgi_app(environ, waitress_compatible_start_response)
+    try:
+        first_chunk = next(iter(app_iter))
+    finally:
+        close = getattr(app_iter, "close", None)
+        if callable(close):
+            close()
+        builder.close()
+
+    assert captured["status"].startswith("200 ")
+    assert first_chunk.startswith(b"event: meta")
+    assert all(name.lower() not in hop_by_hop for name, _value in captured["headers"])

@@ -598,7 +598,6 @@ def _sse_response(generator):
         headers={
             "Cache-Control": "no-cache, no-transform",
             "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
         },
     )
 
