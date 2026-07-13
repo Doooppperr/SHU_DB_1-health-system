@@ -3,6 +3,8 @@ export const AI_PANEL_MAX_WIDTH = 760;
 export const AI_PANEL_COMPACT_BREAKPOINT = 860;
 export const AI_ROUTE_DESIGN_WIDTH = 1440;
 export const AI_ROUTE_MIN_SCALE = 0.7;
+export const CARE_ROUTE_SCALE = 1.12;
+export const CARE_ROUTE_MIN_DESIGN_WIDTH = 1180;
 
 function positiveNumber(value, fallback) {
   const number = Number(value);
@@ -88,5 +90,41 @@ export function calculateAiStageLayout({
     scale,
     scaled: scale < 1,
     overlay: false,
+  };
+}
+
+export function applyCareStageScale(layout, careMode) {
+  if (!careMode || layout.overlay) {
+    return {
+      ...layout,
+      careScale: 1,
+      careScaled: false,
+    };
+  }
+
+  const designWidth = positiveNumber(layout.designWidth, CARE_ROUTE_MIN_DESIGN_WIDTH);
+  const designHeight = positiveNumber(layout.designHeight, 1);
+  const baseScale = positiveNumber(layout.scale, 1);
+  const careScale = Math.min(
+    CARE_ROUTE_SCALE,
+    Math.max(1, designWidth / CARE_ROUTE_MIN_DESIGN_WIDTH)
+  );
+
+  if (careScale <= 1) {
+    return {
+      ...layout,
+      careScale: 1,
+      careScaled: false,
+    };
+  }
+
+  return {
+    ...layout,
+    designWidth: designWidth / careScale,
+    designHeight: designHeight / careScale,
+    scale: baseScale * careScale,
+    scaled: true,
+    careScale,
+    careScaled: true,
   };
 }

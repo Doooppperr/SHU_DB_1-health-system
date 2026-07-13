@@ -2,7 +2,10 @@
   <a class="skip-link" href="#main-content">跳到主要内容</a>
   <div
     class="app-with-ai"
-    :class="{ 'ai-panel-active': showAi && aiStore.isOpen }"
+    :class="{
+      'ai-panel-active': showAi && aiStore.isOpen,
+      'care-stage-active': appLayout.careScaled,
+    }"
     :style="aiLayoutStyle"
   >
     <div
@@ -22,11 +25,13 @@ import { useRoute } from "vue-router";
 
 import AiAssistant from "./components/AiAssistant.vue";
 import { useAiChatStore } from "./stores/aiChat";
+import { useAppearanceStore } from "./stores/appearance";
 import { useAuthStore } from "./stores/auth";
-import { calculateAiStageLayout } from "./utils/aiStageLayout";
+import { applyCareStageScale, calculateAiStageLayout } from "./utils/aiStageLayout";
 
 const authStore = useAuthStore();
 const aiStore = useAiChatStore();
+const appearanceStore = useAppearanceStore();
 const route = useRoute();
 const guestAiRoutes = new Set(["public-home", "login", "register"]);
 let tableObserver = null;
@@ -42,26 +47,29 @@ const showAi = computed(() => {
   if (authStore.accessToken) return authStore.user?.role === "user";
   return guestAiRoutes.has(route.name);
 });
-const aiLayout = computed(() =>
-  calculateAiStageLayout({
+const aiLayout = computed(() => calculateAiStageLayout({
     active: showAi.value && aiStore.isOpen,
     viewportWidth: viewportWidth.value,
     viewportHeight: viewportHeight.value,
     panelWidth: aiStore.panelWidth,
-  })
-);
+  }));
+const appLayout = computed(() => applyCareStageScale(
+  aiLayout.value,
+  appearanceStore.careMode
+));
 const aiOverlayActive = computed(() => (
-  showAi.value && aiStore.isOpen && aiLayout.value.overlay
+  showAi.value && aiStore.isOpen && appLayout.value.overlay
 ));
 const aiLayoutStyle = computed(() => ({
-  "--ai-panel-width": `${aiLayout.value.panelWidth}px`,
-  "--ai-stage-design-width": `${aiLayout.value.designWidth}px`,
-  "--ai-stage-design-height": `${aiLayout.value.designHeight}px`,
-  "--ai-stage-scale": String(aiLayout.value.scale),
+  "--ai-panel-width": `${appLayout.value.panelWidth}px`,
+  "--ai-stage-design-width": `${appLayout.value.designWidth}px`,
+  "--ai-stage-design-height": `${appLayout.value.designHeight}px`,
+  "--ai-stage-scale": String(appLayout.value.scale),
 }));
 
 authStore.hydrate();
 aiStore.initialize(authStore.user?.id || null);
+appearanceStore.initialize();
 
 watch(
   () => authStore.user?.id || null,

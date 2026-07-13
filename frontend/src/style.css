@@ -100,21 +100,6 @@
   --el-color-primary-dark-2: #2b8b7c;
 }
 
-:root[data-care="on"] {
-  --text-xs: 0.9rem;
-  --text-sm: 1.05rem;
-  --text-base: 1.2rem;
-  --text-lg: 1.35rem;
-  --text-title: clamp(2rem, 3.5vw, 2.6rem);
-  --text-display: clamp(3.25rem, 7vw, 5.6rem);
-  --control-min-height: 44px;
-  --sidebar-width: 280px;
-  --el-font-size-base: var(--text-sm);
-  --el-component-size: 44px;
-  --el-component-size-large: 48px;
-  --el-component-size-small: 38px;
-}
-
 * {
   box-sizing: border-box;
 }
@@ -154,11 +139,13 @@ a {
 }
 
 @media (min-width: 861px) {
-  .ai-panel-active {
+  .ai-panel-active,
+  .care-stage-active {
     overflow-x: hidden;
   }
 
-  .ai-panel-active .app-route-stage {
+  .ai-panel-active .app-route-stage,
+  .care-stage-active .app-route-stage {
     width: var(--ai-stage-design-width);
     min-height: var(--ai-stage-design-height);
     zoom: var(--ai-stage-scale);
@@ -224,6 +211,7 @@ a {
 .portal-nav a {
   position: relative;
   padding: 28px 0;
+  white-space: nowrap;
 }
 
 .portal-nav a::after {
@@ -3272,15 +3260,8 @@ body {
   font-size: var(--text-base);
 }
 
-/* Care mode prioritizes readable content and usable controls. */
-:root[data-care="on"] body {
-  line-height: 1.65;
-}
-
-:root[data-care="on"] :where(.el-button, .el-input__wrapper, .el-select__wrapper, .el-textarea__inner, .captcha-image-button) {
-  min-height: 44px;
-}
-
+/* Care mode uses proportional route scaling; these rules only improve wrapping
+   for content that is inherently variable (tables, names and AI responses). */
 :root[data-care="on"] .workspace-brand strong,
 :root[data-care="on"] .workspace-user strong,
 :root[data-care="on"] .record-preview-main strong,
@@ -3295,69 +3276,8 @@ body {
   overflow-wrap: anywhere;
 }
 
-:root[data-care="on"] .metric-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-:root[data-care="on"] .dashboard-grid--wide,
-:root[data-care="on"] .dashboard-grid--equal {
-  grid-template-columns: 1fr;
-}
-
-:root[data-care="on"] .trend-filter-grid,
-:root[data-care="on"] .indicator-form-grid,
-:root[data-care="on"] .friend-add-grid,
-:root[data-care="on"] .comment-form-grid {
-  grid-template-columns: 1fr;
-}
-
 :root[data-care="on"] .ai-panel-active .app-route-stage {
   min-width: 0;
-}
-
-@media (max-width: 1180px) {
-  :root[data-care="on"] .workspace {
-    grid-template-columns: 1fr;
-  }
-
-  :root[data-care="on"] .workspace-sidebar {
-    position: fixed;
-    left: 0;
-    transform: translateX(-105%);
-    transition: transform 0.2s ease;
-  }
-
-  :root[data-care="on"] .workspace-sidebar.is-open {
-    transform: translateX(0);
-  }
-
-  :root[data-care="on"] .workspace-menu-button {
-    display: grid;
-    width: 44px;
-    height: 44px;
-    padding: 10px;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-surface);
-    place-content: center;
-    gap: 4px;
-  }
-
-  :root[data-care="on"] .workspace-menu-button span {
-    width: 18px;
-    height: 2px;
-    border-radius: 2px;
-    background: var(--color-text-secondary);
-  }
-
-  :root[data-care="on"] .workspace-mask {
-    position: fixed;
-    z-index: 45;
-    inset: 0;
-    display: block;
-    border: 0;
-    background: var(--color-overlay);
-  }
 }
 
 @media (max-width: 980px) {

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   AI_PANEL_COMPACT_BREAKPOINT,
   AI_ROUTE_MIN_SCALE,
+  CARE_ROUTE_SCALE,
+  applyCareStageScale,
   calculateAiStageLayout,
   getAiPanelMaxWidth,
   normalizeAiPanelWidth,
@@ -95,5 +97,64 @@ describe("AI route-stage layout", () => {
     expect(normalizeAiPanelWidth(720, 900)).toBe(495);
     expect(normalizeAiPanelWidth(100, 1200)).toBe(360);
     expect(getAiPanelMaxWidth(1600)).toBe(592);
+  });
+});
+
+describe("care-mode route-stage layout", () => {
+  it("magnifies the canvas without changing its visible footprint", () => {
+    const base = calculateAiStageLayout({
+      active: false,
+      viewportWidth: 1920,
+      viewportHeight: 1080,
+      panelWidth: 560,
+    });
+    const layout = applyCareStageScale(base, true);
+
+    expect(layout.careScale).toBe(CARE_ROUTE_SCALE);
+    expect(layout.careScaled).toBe(true);
+    expect(layout.designWidth * layout.scale).toBeCloseTo(1920);
+    expect(layout.designHeight * layout.scale).toBeCloseTo(1080);
+  });
+
+  it("combines with AI-panel scaling without overflowing the remaining width", () => {
+    const base = calculateAiStageLayout({
+      active: true,
+      viewportWidth: 1600,
+      viewportHeight: 900,
+      panelWidth: 560,
+    });
+    const layout = applyCareStageScale(base, true);
+
+    expect(layout.careScaled).toBe(true);
+    expect(layout.designWidth * layout.scale).toBeCloseTo(base.availableWidth);
+    expect(layout.designHeight * layout.scale).toBeCloseTo(900);
+  });
+
+  it("falls back to normal scale when the design canvas has no safe enlargement room", () => {
+    const base = calculateAiStageLayout({
+      active: false,
+      viewportWidth: 1180,
+      viewportHeight: 760,
+      panelWidth: 560,
+    });
+    const layout = applyCareStageScale(base, true);
+
+    expect(layout.careScale).toBe(1);
+    expect(layout.careScaled).toBe(false);
+    expect(layout).toMatchObject(base);
+  });
+
+  it("does not scale the obscured route when the AI assistant is an overlay", () => {
+    const base = calculateAiStageLayout({
+      active: true,
+      viewportWidth: AI_PANEL_COMPACT_BREAKPOINT,
+      viewportHeight: 760,
+      panelWidth: 560,
+    });
+    const layout = applyCareStageScale(base, true);
+
+    expect(layout.overlay).toBe(true);
+    expect(layout.careScaled).toBe(false);
+    expect(layout.scale).toBe(1);
   });
 });
