@@ -9,6 +9,10 @@ const backendProxy = {
 
 export default defineConfig({
   plugins: [vue()],
+  test: {
+    environment: "jsdom",
+    globals: true,
+  },
   server: {
     port: 5173,
     proxy: {

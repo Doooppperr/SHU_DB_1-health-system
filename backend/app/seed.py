@@ -1,6 +1,8 @@
 import os
 from decimal import Decimal
 
+from flask import current_app
+
 from app.extensions import db
 from app.models import IndicatorCategory, IndicatorDict, Institution, Package, User
 
@@ -257,7 +259,22 @@ def seed_core_data():
 
 def seed_admin_user():
     default_admin_username = os.getenv("DEFAULT_ADMIN_USERNAME", "admin").strip()
-    default_admin_password = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123").strip()
+    allow_insecure_local_demo = os.getenv(
+        "ALLOW_INSECURE_LOCAL_DEMO", "0"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    require_secure_admin = bool(
+        current_app.config.get("REQUIRE_SECURE_DEFAULT_ADMIN", False)
+        and not allow_insecure_local_demo
+    )
+    if allow_insecure_local_demo and current_app.config.get(
+        "REQUIRE_SECURE_DEFAULT_ADMIN", False
+    ):
+        current_app.logger.warning(
+            "production is running in loopback-only local demo mode; "
+            "do not expose this process to the network"
+        )
+    configured_admin_password = os.getenv("DEFAULT_ADMIN_PASSWORD", "").strip()
+    default_admin_password = configured_admin_password or "admin123"
     default_admin_email = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@example.com").strip()
 
     if not default_admin_username or not default_admin_password:
@@ -265,10 +282,34 @@ def seed_admin_user():
 
     admin = User.query.filter_by(username=default_admin_username).first()
     if admin is not None:
-        if admin.role != "admin":
+        password_changed = False
+        if require_secure_admin and admin.check_password("admin123"):
+            if (
+                len(configured_admin_password) < 12
+                or configured_admin_password == "admin123"
+            ):
+                raise RuntimeError(
+                    "Production startup refused the insecure default admin password. "
+                    "Set DEFAULT_ADMIN_PASSWORD to at least 12 characters in backend/.env."
+                )
+            admin.set_password(configured_admin_password)
+            password_changed = True
+        if admin.role != "admin" or admin.managed_institution_id is not None:
             admin.role = "admin"
+            admin.managed_institution_id = None
+            password_changed = True
+        if password_changed:
             db.session.commit()
         return
+
+    if require_secure_admin and (
+        len(configured_admin_password) < 12
+        or configured_admin_password == "admin123"
+    ):
+        raise RuntimeError(
+            "Production startup requires DEFAULT_ADMIN_PASSWORD with at least 12 characters "
+            "before creating the initial administrator."
+        )
 
     admin = User(
         username=default_admin_username,

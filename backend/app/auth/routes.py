@@ -1,6 +1,8 @@
 import base64
+import hashlib
 import secrets
 import time
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from flask import current_app, request
@@ -10,10 +12,12 @@ from flask_jwt_extended import (
     get_jwt_identity,
     jwt_required,
 )
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 
 from app.auth import auth_bp
 from app.extensions import db
-from app.models import User
+from app.models import InstitutionInvite, User
 
 
 CAPTCHA_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
@@ -113,6 +117,11 @@ def _build_auth_payload(user, message):
     }
 
 
+def _invite_code_hash(invite_code: str) -> str:
+    normalized = invite_code.strip().upper()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
 @auth_bp.get("/captcha")
 def captcha():
     challenge_id, code, image = _create_captcha_challenge()
@@ -132,6 +141,7 @@ def register():
     password = payload.get("password") or ""
     email = (payload.get("email") or "").strip() or None
     phone = (payload.get("phone") or "").strip() or None
+    invite_code = (payload.get("invite_code") or "").strip()
     captcha_id = (payload.get("captcha_id") or "").strip()
     captcha_answer = (payload.get("captcha_answer") or "").strip()
 
@@ -150,10 +160,58 @@ def register():
     if email and User.query.filter_by(email=email).first():
         return {"message": "email already exists"}, 409
 
-    user = User(username=username, email=email, phone=phone)
+    invite = None
+    expected_invite_hash = None
+    if invite_code:
+        invite = InstitutionInvite.query.filter_by(
+            code_hash=_invite_code_hash(invite_code),
+            status="active",
+        ).first()
+        if invite is None or invite.used_by_user_id is not None:
+            return {"message": "invalid or unavailable invitation code"}, 400
+        if invite.institution is None or not invite.institution.is_active:
+            return {"message": "invitation institution is inactive"}, 400
+        existing_manager = User.query.filter_by(
+            managed_institution_id=invite.institution_id
+        ).first()
+        if existing_manager is not None:
+            return {"message": "institution already has an administrator"}, 409
+        expected_invite_hash = invite.code_hash
+
+    user = User(
+        username=username,
+        email=email,
+        phone=phone,
+        role="institution_admin" if invite else "user",
+        managed_institution_id=invite.institution_id if invite else None,
+    )
     user.set_password(password)
-    db.session.add(user)
-    db.session.commit()
+    try:
+        db.session.add(user)
+        db.session.flush()
+        if invite is not None:
+            consumed = db.session.execute(
+                update(InstitutionInvite)
+                .where(
+                    InstitutionInvite.id == invite.id,
+                    InstitutionInvite.code_hash == expected_invite_hash,
+                    InstitutionInvite.status == "active",
+                    InstitutionInvite.used_by_user_id.is_(None),
+                )
+                .values(
+                    status="used",
+                    used_by_user_id=user.id,
+                    used_at=datetime.now(timezone.utc),
+                )
+                .execution_options(synchronize_session=False)
+            )
+            if consumed.rowcount != 1:
+                db.session.rollback()
+                return {"message": "invitation code has already been used"}, 409
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return {"message": "registration conflict, please retry"}, 409
 
     return _build_auth_payload(user, "register success"), 201
 

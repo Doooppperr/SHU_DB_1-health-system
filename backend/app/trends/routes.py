@@ -1,11 +1,19 @@
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 from flask import request
-from flask_jwt_extended import get_jwt_identity, jwt_required
+from flask_jwt_extended import get_jwt_identity, jwt_required, verify_jwt_in_request
 
 from app.extensions import db
 from app.models import FriendRelation, HealthIndicator, HealthRecord, IndicatorDict, User
+from app.services.indicator_values import parse_numeric_value
+from app.services.permissions import ROLE_USER, get_current_user, role_error
 from app.trends import trends_bp
+
+
+@trends_bp.before_request
+def _require_regular_user_for_trends():
+    verify_jwt_in_request()
+    return role_error(get_current_user(), ROLE_USER)
 
 
 def _current_user_id() -> int:
@@ -75,11 +83,10 @@ def get_indicator_trend(indicator_dict_id: int):
     for indicator_row, record in rows:
         numeric_value = None
         if indicator_dict.value_type == "numeric":
-            try:
-                numeric_value = float(Decimal(str(indicator_row.value).strip()))
+            parsed_value = parse_numeric_value(indicator_row.value)
+            if parsed_value is not None:
+                numeric_value = float(parsed_value)
                 numeric_values.append(numeric_value)
-            except (InvalidOperation, ValueError):
-                numeric_value = None
 
         points.append(
             {

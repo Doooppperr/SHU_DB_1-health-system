@@ -11,4 +11,5 @@ pytest==8.3.4
 requests==2.32.3
 huaweicloudsdkcore==3.1.122
 PyMuPDF==1.26.3
+Pillow==12.2.0
 waitress==3.0.2

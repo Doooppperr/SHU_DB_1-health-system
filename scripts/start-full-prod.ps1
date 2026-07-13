@@ -1,8 +1,8 @@
 param(
-    [string]$BackendListenHost = "0.0.0.0",
+    [string]$BackendListenHost = "127.0.0.1",
     [int]$BackendPort = 5050,
     [int]$BackendThreads = 8,
-    [string]$FrontendListenHost = "0.0.0.0",
+    [string]$FrontendListenHost = "127.0.0.1",
     [int]$FrontendPort = 4173
 )
 

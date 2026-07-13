@@ -46,6 +46,11 @@ class Config:
     UPLOAD_DIR = os.getenv("UPLOAD_DIR", os.path.join(os.getcwd(), "uploads"))
     UPLOAD_URL_BASE = os.getenv("UPLOAD_URL_BASE", "/uploads")
     MAX_CONTENT_LENGTH = 20 * 1024 * 1024
+    INSTITUTION_IMAGE_MAX_BYTES = int(
+        os.getenv("INSTITUTION_IMAGE_MAX_BYTES", str(5 * 1024 * 1024))
+    )
+    INVITE_CODE_BYTES = int(os.getenv("INVITE_CODE_BYTES", "24"))
+    REQUIRE_SECURE_DEFAULT_ADMIN = False
 
 
 class DevelopmentConfig(Config):
@@ -67,6 +72,8 @@ class TestingConfig(Config):
 
 class ProductionConfig(Config):
     DEBUG = False
+    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "").strip()
+    REQUIRE_SECURE_DEFAULT_ADMIN = True
 
 
 config_by_name = {

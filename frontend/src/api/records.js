@@ -27,6 +27,10 @@ export function fetchRecordDetail(recordId) {
   return http.get(`/records/${recordId}`);
 }
 
+export function fetchRecordFile(recordId) {
+  return http.get(`/records/${recordId}/file`, { responseType: "blob" });
+}
+
 export function updateRecord(recordId, payload) {
   return http.put(`/records/${recordId}`, payload);
 }

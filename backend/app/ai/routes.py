@@ -111,8 +111,10 @@ def _parse_record_ids(raw_ids):
 
 
 def _can_access_owner(user, owner_id):
-    if user.role == "admin" or user.id == owner_id:
+    if user.role == "user" and user.id == owner_id:
         return True
+    if user.role != "user":
+        return False
     return (
         FriendRelation.query.filter_by(
             user_id=user.id,
@@ -204,6 +206,8 @@ def chat():
         return {"message": record_error}, 400
     if user is None and record_ids:
         return {"message": "login is required to use health records"}, 403
+    if user is not None and user.role != "user" and record_ids:
+        return {"message": "only regular users can use health records with AI"}, 403
 
     records = []
     if user:

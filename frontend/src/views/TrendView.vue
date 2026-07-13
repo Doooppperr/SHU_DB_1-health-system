@@ -18,18 +18,24 @@
 
       <el-card shadow="never" style="margin-bottom: 16px">
         <div class="trend-filter-grid">
-          <el-select v-model="selectedOwnerId" placeholder="选择档案归属人" style="width: 100%">
-            <el-option v-for="owner in ownerOptions" :key="owner.id" :label="owner.label" :value="owner.id" />
-          </el-select>
+          <label class="filter-field">
+            <span class="filter-field-label">档案归属人</span>
+            <el-select v-model="selectedOwnerId" placeholder="选择档案归属人" style="width: 100%">
+              <el-option v-for="owner in ownerOptions" :key="owner.id" :label="owner.label" :value="owner.id" />
+            </el-select>
+          </label>
 
-          <el-select v-model="selectedIndicatorId" filterable placeholder="选择指标" style="width: 100%">
-            <el-option
-              v-for="item in indicatorOptions"
-              :key="item.id"
-              :label="`${item.code} - ${item.name}`"
-              :value="item.id"
-            />
-          </el-select>
+          <label class="filter-field">
+            <span class="filter-field-label">健康指标</span>
+            <el-select v-model="selectedIndicatorId" filterable placeholder="选择指标" style="width: 100%">
+              <el-option
+                v-for="item in indicatorOptions"
+                :key="item.id"
+                :label="`${item.code} - ${item.name}`"
+                :value="item.id"
+              />
+            </el-select>
+          </label>
 
           <el-button type="primary" :loading="loading" @click="loadTrend">查询趋势</el-button>
         </div>
@@ -45,41 +51,44 @@
           </div>
         </template>
 
-        <div v-if="trendResult.indicator.value_type !== 'numeric'" class="trend-tip">
-          当前指标为文本型，无法绘制数值折线图，仅展示历史明细。
+        <div ref="resultContentRef" class="trend-result-content">
+          <div v-if="trendResult.indicator.value_type !== 'numeric'" class="trend-tip">
+            当前指标为文本型，无法绘制数值折线图，仅展示历史明细。
+          </div>
+
+          <div v-else ref="chartRef" class="trend-chart"></div>
+
+          <el-descriptions :column="summaryColumns" border size="small" style="margin-bottom: 16px">
+            <el-descriptions-item label="最新值">{{ trendResult.summary.latest ?? "-" }}</el-descriptions-item>
+            <el-descriptions-item label="最小值">{{ trendResult.summary.min ?? "-" }}</el-descriptions-item>
+            <el-descriptions-item label="最大值">{{ trendResult.summary.max ?? "-" }}</el-descriptions-item>
+            <el-descriptions-item label="参考范围">
+              {{ trendResult.summary.reference_low ?? "-" }} ~ {{ trendResult.summary.reference_high ?? "-" }}
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <el-table :data="trendResult.series" border empty-text="暂无趋势数据">
+            <el-table-column prop="exam_date" label="体检日期" width="130" />
+            <el-table-column prop="value" label="指标值" min-width="120" />
+            <el-table-column label="是否异常" width="110">
+              <template #default="scope">
+                <el-tag :type="scope.row.is_abnormal ? 'danger' : 'success'">
+                  {{ scope.row.is_abnormal ? "异常" : "正常" }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="source" label="来源" width="90" />
+            <el-table-column prop="record_id" label="档案ID" width="90" />
+          </el-table>
         </div>
-
-        <div v-else ref="chartRef" class="trend-chart"></div>
-
-        <el-descriptions :column="4" border size="small" style="margin-bottom: 16px">
-          <el-descriptions-item label="最新值">{{ trendResult.summary.latest ?? "-" }}</el-descriptions-item>
-          <el-descriptions-item label="最小值">{{ trendResult.summary.min ?? "-" }}</el-descriptions-item>
-          <el-descriptions-item label="最大值">{{ trendResult.summary.max ?? "-" }}</el-descriptions-item>
-          <el-descriptions-item label="参考范围">
-            {{ trendResult.summary.reference_low ?? "-" }} ~ {{ trendResult.summary.reference_high ?? "-" }}
-          </el-descriptions-item>
-        </el-descriptions>
-
-        <el-table :data="trendResult.series" border empty-text="暂无趋势数据">
-          <el-table-column prop="exam_date" label="体检日期" width="130" />
-          <el-table-column prop="value" label="指标值" min-width="120" />
-          <el-table-column label="是否异常" width="110">
-            <template #default="scope">
-              <el-tag :type="scope.row.is_abnormal ? 'danger' : 'success'">
-                {{ scope.row.is_abnormal ? "异常" : "正常" }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="source" label="来源" width="90" />
-          <el-table-column prop="record_id" label="档案ID" width="90" />
-        </el-table>
       </el-card>
     </el-card>
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { storeToRefs } from "pinia";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import * as echarts from "echarts";
 
@@ -87,10 +96,14 @@ import MainNavActions from "../components/MainNavActions.vue";
 import { fetchFriends } from "../api/friends";
 import { fetchIndicatorDicts } from "../api/indicators";
 import { fetchIndicatorTrend } from "../api/trends";
+import { useAppearanceStore } from "../stores/appearance";
 import { useAuthStore } from "../stores/auth";
+import { buildTrendChartOption } from "../utils/chartAppearance";
 
 const router = useRouter();
 const authStore = useAuthStore();
+const appearanceStore = useAppearanceStore();
+const { effectiveTheme, careMode } = storeToRefs(appearanceStore);
 
 const loading = ref(false);
 const errorMessage = ref("");
@@ -103,7 +116,21 @@ const selectedOwnerId = ref(null);
 const selectedIndicatorId = ref(null);
 
 const chartRef = ref(null);
+const resultContentRef = ref(null);
 let chartInstance = null;
+let chartElement = null;
+let resizeObserver = null;
+let windowResizeListening = false;
+const summaryContainerWidth = ref(Number.POSITIVE_INFINITY);
+let summaryResizeObserver = null;
+let summaryWindowResizeListening = false;
+
+const summaryColumns = computed(() => {
+  if (summaryContainerWidth.value <= 520) {
+    return 1;
+  }
+  return careMode.value || summaryContainerWidth.value <= 900 ? 2 : 4;
+});
 
 const ownerOptions = computed(() => {
   const selfOption = authStore.user
@@ -118,19 +145,93 @@ const ownerOptions = computed(() => {
   return [...selfOption, ...friendOptions];
 });
 
+const measureSummaryContainer = (entries) => {
+  const observedWidth = entries?.[0]?.contentRect?.width;
+  const measuredWidth = Number.isFinite(observedWidth)
+    ? observedWidth
+    : resultContentRef.value?.getBoundingClientRect().width;
+  if (Number.isFinite(measuredWidth)) {
+    summaryContainerWidth.value = measuredWidth;
+  }
+};
+
+const unbindSummaryResize = () => {
+  summaryResizeObserver?.disconnect();
+  if (summaryWindowResizeListening) {
+    window.removeEventListener("resize", measureSummaryContainer);
+    summaryWindowResizeListening = false;
+  }
+  summaryContainerWidth.value = Number.POSITIVE_INFINITY;
+};
+
+const bindSummaryResize = (element) => {
+  unbindSummaryResize();
+  if (!element) {
+    return;
+  }
+  if (typeof ResizeObserver === "function") {
+    summaryResizeObserver ||= new ResizeObserver(measureSummaryContainer);
+    summaryResizeObserver.observe(element);
+  } else {
+    window.addEventListener("resize", measureSummaryContainer);
+    summaryWindowResizeListening = true;
+  }
+  measureSummaryContainer();
+};
+
+const resizeChart = () => {
+  chartInstance?.resize();
+};
+
+const unbindChartResize = () => {
+  resizeObserver?.disconnect();
+  if (windowResizeListening) {
+    window.removeEventListener("resize", resizeChart);
+    windowResizeListening = false;
+  }
+  chartElement = null;
+};
+
+const disposeChart = () => {
+  unbindChartResize();
+  chartInstance?.dispose();
+  chartInstance = null;
+};
+
+const bindChartResize = (element) => {
+  if (chartElement === element) {
+    return;
+  }
+
+  unbindChartResize();
+  chartElement = element;
+  if (typeof ResizeObserver === "function") {
+    resizeObserver ||= new ResizeObserver(resizeChart);
+    resizeObserver.observe(element);
+  } else {
+    window.addEventListener("resize", resizeChart);
+    windowResizeListening = true;
+  }
+};
+
 const renderChart = async () => {
-  if (!trendResult.value || trendResult.value.indicator.value_type !== "numeric") {
-    return;
-  }
-
   await nextTick();
-  if (!chartRef.value) {
+  if (
+    !trendResult.value ||
+    trendResult.value.indicator.value_type !== "numeric" ||
+    !chartRef.value
+  ) {
+    disposeChart();
     return;
   }
 
+  if (chartInstance && chartElement !== chartRef.value) {
+    disposeChart();
+  }
   if (!chartInstance) {
     chartInstance = echarts.init(chartRef.value);
   }
+  bindChartResize(chartRef.value);
 
   const xAxisData = trendResult.value.series.map((item) => item.exam_date);
   const yAxisData = trendResult.value.series.map((item) => item.numeric_value);
@@ -151,38 +252,18 @@ const renderChart = async () => {
     });
   }
 
-  chartInstance.setOption({
-    tooltip: { trigger: "axis" },
-    grid: { left: 40, right: 24, top: 36, bottom: 36 },
-    xAxis: {
-      type: "category",
-      data: xAxisData,
-      boundaryGap: false,
-    },
-    yAxis: {
-      type: "value",
-      name: trendResult.value.indicator.unit || "",
-      nameLocation: "end",
-      nameTextStyle: { padding: [0, 0, 0, 8] },
-    },
-    series: [
-      {
-        type: "line",
-        smooth: true,
-        data: yAxisData,
-        connectNulls: false,
-        itemStyle: { color: "#2f7ed8" },
-        lineStyle: { width: 3 },
-        markLine: referenceLines.length ? { symbol: "none", data: referenceLines } : undefined,
-      },
-    ],
-  });
-};
-
-const resizeChart = () => {
-  if (chartInstance) {
-    chartInstance.resize();
-  }
+  chartInstance.setOption(
+    buildTrendChartOption({
+      theme: effectiveTheme.value,
+      careMode: careMode.value,
+      accent: "user",
+      xAxisData,
+      yAxisData,
+      unit: trendResult.value.indicator.unit || "",
+      referenceLines,
+    }),
+    { notMerge: true, lazyUpdate: false }
+  );
 };
 
 const loadBaseData = async () => {
@@ -248,17 +329,29 @@ onMounted(async () => {
   try {
     await loadBaseData();
     await loadTrend();
-    window.addEventListener("resize", resizeChart);
   } catch (error) {
     errorMessage.value = error?.response?.data?.message || "趋势页面初始化失败";
   }
 });
 
-onBeforeUnmount(() => {
-  window.removeEventListener("resize", resizeChart);
-  if (chartInstance) {
-    chartInstance.dispose();
-    chartInstance = null;
+watch([effectiveTheme, careMode], () => {
+  if (trendResult.value?.indicator?.value_type === "numeric") {
+    void renderChart();
   }
+});
+
+watch(chartRef, (element) => {
+  if (!element && chartInstance) {
+    disposeChart();
+  }
+});
+
+watch(resultContentRef, bindSummaryResize, { flush: "post" });
+
+onBeforeUnmount(() => {
+  unbindSummaryResize();
+  disposeChart();
+  resizeObserver = null;
+  summaryResizeObserver = null;
 });
 </script>

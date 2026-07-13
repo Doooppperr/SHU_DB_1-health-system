@@ -1,9 +1,64 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Health System</title>
+    <meta name="theme-color" content="#f5f5f7" />
+    <script>
+      (() => {
+        const storageKey = "health-system-appearance";
+        const validModes = ["system", "light", "dark"];
+        let themeMode = "system";
+        let careMode = false;
+
+        try {
+          const rawPreference = window.sessionStorage.getItem(storageKey);
+          if (rawPreference) {
+            const preference = JSON.parse(rawPreference);
+            if (preference && typeof preference === "object") {
+              themeMode = validModes.includes(preference.themeMode)
+                ? preference.themeMode
+                : "system";
+              careMode = preference.careMode === true;
+            }
+          }
+        } catch {
+          // Storage may be unavailable in privacy-restricted environments.
+        }
+
+        let systemTheme = "light";
+        try {
+          systemTheme = window.matchMedia?.("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+        } catch {
+          // Light is the safe fallback when the system preference is unavailable.
+        }
+
+        const effectiveTheme = themeMode === "system" ? systemTheme : themeMode;
+        const root = document.documentElement;
+        root.dataset.theme = effectiveTheme;
+        root.dataset.care = careMode ? "on" : "off";
+        root.classList.toggle("dark", effectiveTheme === "dark");
+        root.style.colorScheme = effectiveTheme;
+        document
+          .querySelector('meta[name="theme-color"]')
+          ?.setAttribute("content", effectiveTheme === "dark" ? "#101012" : "#f5f5f7");
+      })();
+    </script>
+    <style>
+      html,
+      body {
+        background: #f5f5f7;
+      }
+
+      html[data-theme="dark"],
+      html[data-theme="dark"] body {
+        background: #101012;
+      }
+    </style>
+    <meta name="description" content="康迹 HealthHub：清晰、安全地管理个人与亲友健康档案。" />
+    <title>康迹 HealthHub</title>
   </head>
   <body>
     <div id="app"></div>

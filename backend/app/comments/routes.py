@@ -4,6 +4,7 @@ from flask_jwt_extended import get_jwt_identity, jwt_required
 from app.comments import comments_bp
 from app.extensions import db
 from app.models import Comment, HealthRecord, Institution, User
+from app.services.permissions import ROLE_USER, role_error
 
 
 def _current_user():
@@ -52,8 +53,9 @@ def _is_admin(user: User | None) -> bool:
 @jwt_required()
 def list_comments():
     user = _current_user()
-    if user is None:
-        return {"message": "user not found"}, 404
+    error = role_error(user, ROLE_USER)
+    if error:
+        return error
 
     institution_id = _parse_optional_int(request.args.get("institution_id"))
     include_hidden = _parse_bool(request.args.get("include_hidden")) or False
@@ -73,8 +75,9 @@ def list_comments():
 @jwt_required()
 def list_my_comments():
     user = _current_user()
-    if user is None:
-        return {"message": "user not found"}, 404
+    error = role_error(user, ROLE_USER)
+    if error:
+        return error
 
     institution_id = _parse_optional_int(request.args.get("institution_id"))
     query = Comment.query.filter_by(user_id=user.id).order_by(Comment.created_at.desc(), Comment.id.desc())
@@ -89,8 +92,9 @@ def list_my_comments():
 @jwt_required()
 def create_comment():
     user = _current_user()
-    if user is None:
-        return {"message": "user not found"}, 404
+    error = role_error(user, ROLE_USER)
+    if error:
+        return error
 
     payload = request.get_json(silent=True) or {}
     institution_id = _parse_optional_int(payload.get("institution_id"))
@@ -101,7 +105,7 @@ def create_comment():
         return {"message": "institution_id is required"}, 400
 
     institution = db.session.get(Institution, institution_id)
-    if institution is None:
+    if institution is None or not institution.is_active:
         return {"message": "institution not found"}, 404
 
     if not content:
@@ -224,7 +228,7 @@ def delete_comment(comment_id: int):
     if comment is None:
         return {"message": "comment not found"}, 404
 
-    if not _is_admin(user) and comment.user_id != user.id:
+    if not _is_admin(user) and (user.role != ROLE_USER or comment.user_id != user.id):
         return {"message": "permission denied"}, 403
 
     db.session.delete(comment)

@@ -3,7 +3,8 @@ from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy import or_
 
 from app.extensions import db
-from app.models import Comment, FriendRelation, HealthRecord, User
+from app.models import Comment, FriendRelation, HealthRecord, InstitutionInvite, User
+from app.services.record_files import delete_report_urls
 from app.users import users_bp
 
 
@@ -86,6 +87,12 @@ def update_user(target_user_id: int):
         role = (payload.get("role") or "").strip()
         if role not in ALLOWED_USER_ROLES:
             return {"message": "invalid role"}, 400
+        if target_user.id == current_user.id and role != current_user.role:
+            return {"message": "admin cannot change own role"}, 400
+        if target_user.role == "institution_admin":
+            return {
+                "message": "use the revoke institution administrator action",
+            }, 400
         target_user.role = role
 
     if "password" in payload:
@@ -96,6 +103,35 @@ def update_user(target_user_id: int):
 
     db.session.commit()
     return {"item": target_user.to_dict()}, 200
+
+
+def _revoke_institution_admin(target_user_id: int):
+    current_user = _current_user()
+    error_payload, error_status = _require_admin(current_user)
+    if error_payload:
+        return error_payload, error_status
+
+    target_user = db.session.get(User, target_user_id)
+    if target_user is None:
+        return {"message": "user not found"}, 404
+    if target_user.role != "institution_admin":
+        return {"message": "user is not an institution administrator"}, 400
+
+    previous_institution_id = target_user.managed_institution_id
+    target_user.role = "user"
+    target_user.managed_institution_id = None
+    db.session.commit()
+    return {
+        "item": target_user.to_dict(),
+        "revoked_institution_id": previous_institution_id,
+        "message": "institution administrator revoked",
+    }, 200
+
+
+@users_bp.post("/<int:target_user_id>/revoke-institution-admin")
+@jwt_required()
+def revoke_institution_admin(target_user_id: int):
+    return _revoke_institution_admin(target_user_id)
 
 
 @users_bp.delete("/<int:target_user_id>")
@@ -112,6 +148,10 @@ def delete_user(target_user_id: int):
     target_user = db.session.get(User, target_user_id)
     if target_user is None:
         return {"message": "user not found"}, 404
+    if target_user.role == "institution_admin":
+        return {
+            "message": "revoke institution administrator before deleting the user",
+        }, 400
 
     relations = FriendRelation.query.filter(
         or_(FriendRelation.user_id == target_user_id, FriendRelation.friend_user_id == target_user_id)
@@ -126,10 +166,25 @@ def delete_user(target_user_id: int):
     records = HealthRecord.query.filter(
         or_(HealthRecord.owner_id == target_user_id, HealthRecord.uploader_id == target_user_id)
     ).all()
+    report_file_urls = [record.report_file_url for record in records]
     for record in records:
         db.session.delete(record)
 
+    InstitutionInvite.query.filter_by(used_by_user_id=target_user_id).update(
+        {InstitutionInvite.used_by_user_id: None},
+        synchronize_session=False,
+    )
+    InstitutionInvite.query.filter_by(revoked_by_admin_id=target_user_id).update(
+        {InstitutionInvite.revoked_by_admin_id: None},
+        synchronize_session=False,
+    )
+    InstitutionInvite.query.filter_by(issued_by_admin_id=target_user_id).update(
+        {InstitutionInvite.issued_by_admin_id: current_user.id},
+        synchronize_session=False,
+    )
+
     db.session.delete(target_user)
     db.session.commit()
+    delete_report_urls(report_file_urls)
 
     return {"message": "user deleted"}, 200

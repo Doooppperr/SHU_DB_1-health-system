@@ -3,33 +3,42 @@ from flask_jwt_extended import jwt_required
 from app.extensions import db
 from app.institutions import institutions_bp
 from app.models import Institution, Package
+from app.services.institution_management import institution_payload
 
 
 @institutions_bp.get("")
 @jwt_required()
 def list_institutions():
-    institutions = Institution.query.order_by(Institution.id.asc()).all()
-    return {"items": [item.to_dict() for item in institutions]}, 200
+    institutions = (
+        Institution.query.filter(Institution.is_active.is_(True))
+        .order_by(Institution.id.asc())
+        .all()
+    )
+    return {"items": [institution_payload(item) for item in institutions]}, 200
 
 
 @institutions_bp.get("/<int:institution_id>")
 @jwt_required()
 def get_institution_detail(institution_id: int):
     institution = db.session.get(Institution, institution_id)
-    if institution is None:
+    if institution is None or not institution.is_active:
         return {"message": "institution not found"}, 404
 
-    return {"item": institution.to_dict()}, 200
+    return {"item": institution_payload(institution)}, 200
 
 
 @institutions_bp.get("/<int:institution_id>/packages")
 @jwt_required()
 def list_packages(institution_id: int):
     institution = db.session.get(Institution, institution_id)
-    if institution is None:
+    if institution is None or not institution.is_active:
         return {"message": "institution not found"}, 404
 
-    packages = Package.query.filter_by(institution_id=institution_id).order_by(Package.id.asc()).all()
+    packages = (
+        Package.query.filter_by(institution_id=institution_id, is_active=True)
+        .order_by(Package.id.asc())
+        .all()
+    )
     return {
         "institution": {
             "id": institution.id,

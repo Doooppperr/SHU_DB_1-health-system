@@ -1,57 +1,146 @@
 # Health System Frontend
 
-Vue 3 + Vite 前端，使用 Vue Router、Pinia、Element Plus、Axios 和 ECharts。除健康档案、OCR、趋势和评论页面外，应用根组件还挂载了全局 AI 智能助手。
+Vue 3 + Vite 6 前端，以“公开门户 + 三角色工作台”为页面结构。普通用户、机构管理员和系统管理员拥有独立首页、菜单、路由和接口调用，不共享业务后台。
 
-## 安装
+## 环境与安装
 
-```bash
+要求 Node.js 20+、npm 10+。
+
+~~~powershell
 npm install
-```
+~~~
 
-## 启动
+## 页面与路由
 
-```bash
+### 公开页面
+
+| 路由 | 页面 |
+|---|---|
+| / | 康迹 HealthHub 公开门户：项目介绍、核心功能、使用流程、隐私提示、关于我们 |
+| /login | 独立品牌化登录页 |
+| /register | 普通用户注册或填写邀请码的机构工作人员注册 |
+| /403 | 无权访问 |
+| 其他未知路径 | 404 页面 |
+
+### 普通用户工作台
+
+登录后入口为 /dashboard，菜单包括：
+
+- 健康总览
+- 健康档案与档案详情
+- OCR 报告录入
+- 指标趋势
+- 亲友授权
+- 体检机构与套餐
+- 我的评论
+- 个人中心
+
+档案表单中的机构和套餐均可“暂不选取”。选择来源机构时会提示：档案确认后，标准化指标会只读开放给对应机构管理员。
+
+### 机构管理员工作台
+
+登录后入口为 /org/dashboard，菜单包括：
+
+- 机构运营总览
+- 机构资料维护
+- 机构相册管理
+- 体检套餐管理
+- 本机构健康档案
+- 本机构指标趋势
+
+机构健康页面只展示后端返回的脱敏只读数据，不提供档案修改、补录、删除和原始报告入口。
+
+### 系统管理员工作台
+
+登录后入口为 /admin/dashboard，菜单包括：
+
+- 系统运营总览
+- 机构、套餐与相册管理
+- 邀请码管理
+- 用户与角色管理
+- 全局档案监管
+- 评论审核
+
+系统管理员可签发机构邀请码、查看邀请码状态、撤销机构管理员，以及停用或恢复机构和套餐。
+
+## 角色路由保护
+
+路由元数据明确限定 user、institution_admin、admin。登录、刷新令牌或重新获取当前用户后，前端会按后端返回的真实角色跳转：
+
+- user → /dashboard
+- institution_admin → /org/dashboard
+- admin → /admin/dashboard
+
+跨角色访问会进入 /403；未登录访问工作台会跳转到 /login；已登录用户访问登录或注册页会返回所属工作台。后端仍执行独立权限校验，前端守卫不是唯一安全边界。
+
+## 机构相册
+
+机构管理员和系统管理员页面均支持：
+
+- JPEG、PNG、WebP 上传。
+- 每张最多 5 MB、每机构最多 8 张。
+- 拖拽排序。
+- 第一张自动作为封面。
+- 删除图片。
+
+实际格式、大小、EXIF 清理和数量上限由后端再次验证。
+
+## AI 智能助手
+
+- 公开门户、登录和注册页显示访客 AI，仅回答公开系统导览。
+- 普通用户工作台显示完整健康 AI，可选择同一归属人的最多 5 份已确认档案。
+- 机构管理员和系统管理员工作台不显示健康 AI。
+- 选择档案后需确认指标会发送到配置的 DeepSeek API。
+- 对话和摘要仅存入当前标签页 sessionStorage；结束对话或退出登录时清理。
+- 悬浮球位置与侧栏宽度保存在 localStorage，不包含对话或健康数据。
+- DeepSeek API Key 只由后端读取，前端代码和浏览器存储不包含密钥。
+
+主要文件：
+
+- src/components/AiAssistant.vue：访客/用户 AI 交互界面。
+- src/stores/aiChat.js：会话、摘要、档案选择和发送状态。
+- src/utils/roles.js：角色与工作台映射。
+- src/layouts/WorkspaceLayout.vue：三套菜单与通用工作台外壳。
+- src/api/admin.js、src/api/org.js、src/api/dashboards.js：角色专属接口。
+
+## 开发启动
+
+~~~powershell
 npm run dev
-```
+~~~
+
+默认地址：http://127.0.0.1:5173
+
+Vite 将 /api 和 /uploads 代理到 Flask 后端 http://127.0.0.1:5050。项目根目录也提供：
+
+~~~powershell
+.\scripts\start-frontend-dev.ps1
+~~~
 
 ## 构建与预览
 
-```bash
+~~~powershell
 npm run build
 npm run preview
-```
+~~~
 
-项目根目录也提供脚本：
+本机生产预览默认地址：http://127.0.0.1:4173
 
-```powershell
-.\scripts\start-frontend-dev.ps1
-.\scripts\start-frontend-prod.ps1
-```
+项目根目录也提供 scripts/start-frontend-prod.ps1。
 
-开发服务器默认访问 `http://127.0.0.1:5173`，并把 `/api` 与 `/uploads` 代理到 Flask 后端 `http://127.0.0.1:5050`。
+## 测试与依赖审计
 
-## AI 智能助手界面
-
-- `src/components/AiAssistant.vue`：可拖动悬浮球、可调宽右侧栏、消息列表、档案多选和隐私确认。
-- `src/stores/aiChat.js`：会话、摘要、最近 10 轮、选择档案、侧栏宽度和发送状态。
-- `src/api/ai.js`：调用 `POST /api/ai/chat`，超时单独设置为 75 秒。
-- `src/utils/aiSession.js`：统一清理浏览器会话。
-
-行为约定：
-
-- 登录前也显示悬浮球，仅提供公开系统功能导览。
-- 登录后可选择同一人的最多 5 份已确认档案；选择档案后必须确认指标将发送至 DeepSeek API。
-- 对话正文和摘要写入 `sessionStorage`，因此刷新页面仍可恢复；关闭标签页、结束对话或退出登录后不再保留。
-- 悬浮球位置和侧栏宽度属于界面偏好，保存在 `localStorage`，不包含聊天内容或健康指标。
-- 登录、注册成功会清除匿名对话；退出登录会清除当前身份的 AI 会话，避免不同身份混用上下文。
-- 桌面端打开侧栏后主页面缩小，移动端侧栏覆盖全屏。
-
-DeepSeek API Key 只由后端环境变量读取，前端代码和浏览器存储中都不应出现密钥。
-
-## 构建验证
-
-```powershell
+~~~powershell
+npm test
 npm run build
-```
+npm audit --omit=dev
+~~~
 
-当前生产构建通过；浏览器已验证匿名 FAQ、刷新恢复、侧栏开合及宽度拖动，控制台无错误。
+当前结果：
+
+- Vitest：3 个测试文件、12 个测试通过。
+- 覆盖角色工作台映射、公开/三角色路由隔离和注册邀请码载荷。
+- Vite 生产构建通过。
+- npm audit --omit=dev：0 vulnerabilities。
+
+构建会提示 ECharts 主分包体积较大，但不影响本次生产构建通过；后续可按页面拆分图表模块作为性能优化。

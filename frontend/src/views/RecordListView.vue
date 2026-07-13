@@ -73,10 +73,11 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item label="体检机构" required>
+        <el-form-item label="体检机构（可选）">
           <el-select
             v-model="createForm.institution_id"
-            placeholder="请选择机构"
+            clearable
+            placeholder="暂不选取"
             style="width: 100%"
             @change="onInstitutionChange"
           >
@@ -89,11 +90,19 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item label="体检套餐" required>
-          <el-select v-model="createForm.package_id" placeholder="请选择套餐" style="width: 100%">
-            <el-option v-for="pkg in currentPackages" :key="pkg.id" :label="pkg.name" :value="pkg.id" />
+        <el-form-item label="体检套餐（可选）">
+          <el-select v-model="createForm.package_id" clearable placeholder="暂不选取" style="width: 100%" @change="onCreatePackageChange">
+            <el-option v-for="pkg in currentPackages" :key="pkg.id" :label="packageLabel(pkg, createForm.institution_id)" :value="pkg.id" />
           </el-select>
         </el-form-item>
+
+        <el-alert
+          v-if="createForm.institution_id"
+          title="档案确认后，标准化档案信息和指标会自动向对应机构管理员只读开放。联系方式和原始报告不会开放。"
+          type="warning"
+          show-icon
+          :closable="false"
+        />
       </el-form>
 
       <template #footer>
@@ -115,7 +124,7 @@
         </el-form-item>
 
         <el-form-item label="档案归属人" required>
-          <el-select v-model="editForm.owner_id" placeholder="请选择档案归属人" style="width: 100%">
+          <el-select v-model="editForm.owner_id" disabled placeholder="档案归属创建后不可修改" style="width: 100%">
             <el-option
               v-for="owner in ownerOptions"
               :key="owner.id"
@@ -125,10 +134,11 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item label="体检机构" required>
+        <el-form-item label="体检机构（可选）">
           <el-select
             v-model="editForm.institution_id"
-            placeholder="请选择机构"
+            clearable
+            placeholder="暂不选取"
             style="width: 100%"
             @change="onEditInstitutionChange"
           >
@@ -141,11 +151,20 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item label="体检套餐" required>
-          <el-select v-model="editForm.package_id" placeholder="请选择套餐" style="width: 100%">
-            <el-option v-for="pkg in currentEditPackages" :key="pkg.id" :label="pkg.name" :value="pkg.id" />
+        <el-form-item label="体检套餐（可选）">
+          <el-select v-model="editForm.package_id" clearable placeholder="暂不选取" style="width: 100%" @change="onEditPackageChange">
+            <el-option v-for="pkg in currentEditPackages" :key="pkg.id" :label="packageLabel(pkg, editForm.institution_id)" :value="pkg.id" />
           </el-select>
         </el-form-item>
+
+        <el-alert
+          v-if="editForm.institution_id"
+          title="已确认档案会自动向所选机构管理员开放标准化数据。清空机构后，原机构将立即失去访问权。"
+          type="warning"
+          show-icon
+          :closable="false"
+          style="margin-bottom: 16px"
+        />
 
         <el-form-item label="状态" required>
           <el-select v-model="editForm.status" style="width: 100%">
@@ -208,18 +227,20 @@ const editForm = reactive({
 });
 
 const currentPackages = computed(() => {
-  if (!createForm.institution_id) {
-    return [];
-  }
-  return packageMap.value[createForm.institution_id] || [];
+  if (createForm.institution_id) return packageMap.value[createForm.institution_id] || [];
+  return Object.values(packageMap.value).flat();
 });
 
 const currentEditPackages = computed(() => {
-  if (!editForm.institution_id) {
-    return [];
-  }
-  return packageMap.value[editForm.institution_id] || [];
+  if (editForm.institution_id) return packageMap.value[editForm.institution_id] || [];
+  return Object.values(packageMap.value).flat();
 });
+
+const packageLabel = (pkg, selectedInstitutionId) => {
+  if (selectedInstitutionId) return pkg.name;
+  const institution = institutions.value.find((item) => item.id === pkg.institution_id);
+  return institution ? `${pkg.name} · ${institution.name}` : pkg.name;
+};
 
 const ownerOptions = computed(() => {
   if (authStore.user?.role === "admin") {
@@ -319,6 +340,7 @@ const openCreateDialog = async () => {
 
 const onInstitutionChange = async (institutionId) => {
   createForm.package_id = null;
+  if (!institutionId) return;
   try {
     await loadPackages(institutionId);
   } catch (error) {
@@ -331,6 +353,14 @@ const resetCreateForm = () => {
   createForm.owner_id = authStore.user?.id || null;
   createForm.institution_id = null;
   createForm.package_id = null;
+};
+
+const onCreatePackageChange = (packageId) => {
+  if (!packageId) return;
+  const pkg = Object.values(packageMap.value).flat().find((item) => item.id === packageId);
+  if (pkg?.institution_id && createForm.institution_id !== pkg.institution_id) {
+    createForm.institution_id = pkg.institution_id;
+  }
 };
 
 const openEditDialog = async (row) => {
@@ -355,6 +385,7 @@ const openEditDialog = async (row) => {
 
 const onEditInstitutionChange = async (institutionId) => {
   editForm.package_id = null;
+  if (!institutionId) return;
   try {
     await loadPackages(institutionId);
   } catch (error) {
@@ -362,9 +393,17 @@ const onEditInstitutionChange = async (institutionId) => {
   }
 };
 
+const onEditPackageChange = (packageId) => {
+  if (!packageId) return;
+  const pkg = Object.values(packageMap.value).flat().find((item) => item.id === packageId);
+  if (pkg?.institution_id && editForm.institution_id !== pkg.institution_id) {
+    editForm.institution_id = pkg.institution_id;
+  }
+};
+
 const submitEdit = async () => {
-  if (!editForm.id || !editForm.exam_date || !editForm.owner_id || !editForm.institution_id || !editForm.package_id) {
-    ElMessage.error("请完整填写体检日期、归属人、机构和套餐");
+  if (!editForm.id || !editForm.exam_date || !editForm.owner_id) {
+    ElMessage.error("请完整填写体检日期和档案归属人");
     return;
   }
 
@@ -389,8 +428,8 @@ const submitEdit = async () => {
 };
 
 const submitCreate = async () => {
-  if (!createForm.exam_date || !createForm.owner_id || !createForm.institution_id || !createForm.package_id) {
-    ElMessage.error("请完整填写体检日期、归属人、机构和套餐");
+  if (!createForm.exam_date || !createForm.owner_id) {
+    ElMessage.error("请完整填写体检日期和档案归属人");
     return;
   }
 
@@ -478,6 +517,7 @@ onMounted(async () => {
 
   const ownerLoader = authStore.user?.role === "admin" ? loadAdminUsers() : loadFriends();
   await Promise.all([loadRecords(), loadInstitutions(), ownerLoader]);
+  await Promise.all(institutions.value.map((institution) => loadPackages(institution.id)));
   if (!createForm.owner_id && authStore.user) {
     createForm.owner_id = authStore.user.id;
   }

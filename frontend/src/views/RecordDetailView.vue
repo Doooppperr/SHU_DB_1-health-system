@@ -49,7 +49,7 @@
                 :value="dict.id"
               >
                 <span>{{ dict.code }} - {{ dict.name }}</span>
-                <span style="float: right; color: #8492a6; font-size: 12px">
+                <span class="indicator-option-reference">
                   {{ dict.reference_low ?? '-' }} ~ {{ dict.reference_high ?? '-' }} {{ dict.unit || '' }}
                 </span>
               </el-option>

@@ -1,11 +1,10 @@
 import json
 import os
-import re
 from datetime import date
-from decimal import Decimal, InvalidOperation
 
-from flask import current_app, request
-from flask_jwt_extended import get_jwt_identity, jwt_required
+from flask import current_app, request, send_file
+from flask_jwt_extended import get_jwt_identity, jwt_required, verify_jwt_in_request
+from sqlalchemy import func
 
 from app.extensions import db
 from app.models import (
@@ -19,11 +18,23 @@ from app.models import (
 )
 from app.records import records_bp
 from app.services import get_ocr_provider, get_storage_backend
+from app.services.indicator_values import (
+    IndicatorValueError,
+    evaluate_is_abnormal,
+    normalize_indicator_value,
+)
 from app.services.ocr import mapping_service
+from app.services.permissions import ROLE_USER, role_error
+from app.services.record_files import delete_report_urls, report_file_path
 
 
 ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
-NUMERIC_VALUE_PATTERN = re.compile(r"[-+]?\d+(?:\.\d+)?")
+
+
+@records_bp.before_request
+def _require_regular_user_for_records():
+    verify_jwt_in_request()
+    return role_error(_current_user(), ROLE_USER)
 
 
 def _current_user_id() -> int:
@@ -32,10 +43,6 @@ def _current_user_id() -> int:
 
 def _current_user():
     return db.session.get(User, _current_user_id())
-
-
-def _is_admin(user: User | None) -> bool:
-    return user is not None and user.role == "admin"
 
 
 def _parse_exam_date(raw_value: str):
@@ -67,9 +74,6 @@ def _parse_owner_id(raw_owner_id, current_user_id: int):
 
 
 def _get_manageable_owner_ids(user: User):
-    if _is_admin(user):
-        return [item.id for item in User.query.order_by(User.id.asc()).all()]
-
     relation_rows = FriendRelation.query.filter_by(user_id=user.id, auth_status=True).all()
     owner_ids = [user.id]
     owner_ids.extend(item.friend_user_id for item in relation_rows)
@@ -81,7 +85,7 @@ def _validate_owner_manage_permission(manager_user: User, owner_id: int):
     if owner_user is None:
         return {"message": "owner user not found"}, 404
 
-    if _is_admin(manager_user) or manager_user.id == owner_id:
+    if manager_user.id == owner_id:
         return None, None
 
     relation = FriendRelation.query.filter_by(user_id=manager_user.id, friend_user_id=owner_id).first()
@@ -95,7 +99,7 @@ def _validate_owner_manage_permission(manager_user: User, owner_id: int):
 
 
 def _can_manage_owner(user: User, owner_id: int) -> bool:
-    if _is_admin(user) or user.id == owner_id:
+    if user.id == owner_id:
         return True
 
     relation = FriendRelation.query.filter_by(
@@ -117,61 +121,28 @@ def _get_accessible_record(record_id: int, user: User):
     return record
 
 
-def _evaluate_is_abnormal(indicator_dict: IndicatorDict, value: str) -> bool:
-    if indicator_dict.value_type != "numeric":
-        return False
-
-    numeric_value = _extract_numeric_value(value)
-    if numeric_value is None:
-        return False
-
-    if indicator_dict.reference_low is not None and numeric_value < indicator_dict.reference_low:
-        return True
-
-    if indicator_dict.reference_high is not None and numeric_value > indicator_dict.reference_high:
-        return True
-
-    return False
-
-
-def _extract_numeric_value(raw_value):
-    if raw_value is None:
-        return None
-
-    text = str(raw_value).strip()
-    if not text:
-        return None
-
-    compact = text.replace(",", "")
-    try:
-        return Decimal(compact)
-    except (InvalidOperation, ValueError):
-        pass
-
-    match = NUMERIC_VALUE_PATTERN.search(compact)
-    if match is None:
-        return None
-
-    try:
-        return Decimal(match.group(0))
-    except (InvalidOperation, ValueError):
-        return None
-
-
 def _validate_institution_package(institution_id, package_id):
     institution = db.session.get(Institution, institution_id) if institution_id else None
     if institution_id and institution is None:
         return None, None, {"message": "institution not found"}, 404
+    if institution is not None and not getattr(institution, "is_active", True):
+        return None, None, {"message": "institution is inactive"}, 400
 
     package = db.session.get(Package, package_id) if package_id else None
     if package_id and package is None:
         return None, None, {"message": "package not found"}, 404
+    if package is not None and not getattr(package, "is_active", True):
+        return None, None, {"message": "package is inactive"}, 400
 
     if package and institution and package.institution_id != institution.id:
         return None, None, {"message": "package does not belong to the institution"}, 400
 
     if package and institution is None:
         institution = db.session.get(Institution, package.institution_id)
+        if institution is None:
+            return None, None, {"message": "institution not found"}, 404
+        if not getattr(institution, "is_active", True):
+            return None, None, {"message": "institution is inactive"}, 400
 
     return institution, package, None, None
 
@@ -294,8 +265,12 @@ def _upsert_ocr_indicators(record: HealthRecord, confirmed_mappings):
         if indicator_dict is None:
             continue
 
-        value = str(mapping["value"]).strip()
-        is_abnormal = _evaluate_is_abnormal(indicator_dict, value)
+        try:
+            value = normalize_indicator_value(indicator_dict, mapping["value"])
+        except IndicatorValueError:
+            invalid_ids.append(indicator_dict_id)
+            continue
+        is_abnormal = evaluate_is_abnormal(indicator_dict, value)
 
         existing = existing_map.get(indicator_dict_id)
         if existing is not None:
@@ -317,6 +292,42 @@ def _upsert_ocr_indicators(record: HealthRecord, confirmed_mappings):
         changed_count += 1
 
     return changed_count, invalid_ids
+
+
+@records_bp.get("/summary")
+@jwt_required()
+def get_record_summary():
+    user = _current_user()
+    owner_ids = _get_manageable_owner_ids(user)
+    base = HealthRecord.query.filter(HealthRecord.owner_id.in_(owner_ids))
+    record_count = base.count()
+    confirmed_count = base.filter(HealthRecord.status == "confirmed").count()
+    recent = base.order_by(HealthRecord.exam_date.desc(), HealthRecord.id.desc()).limit(5).all()
+    recent_exam_date = (
+        db.session.query(func.max(HealthRecord.exam_date))
+        .filter(HealthRecord.owner_id.in_(owner_ids))
+        .scalar()
+    )
+    abnormal_count = (
+        db.session.query(func.count(HealthIndicator.id))
+        .join(HealthRecord, HealthIndicator.record_id == HealthRecord.id)
+        .filter(
+            HealthRecord.owner_id.in_(owner_ids),
+            HealthRecord.status == "confirmed",
+            HealthIndicator.is_abnormal.is_(True),
+        )
+        .scalar()
+        or 0
+    )
+    return {
+        "summary": {
+            "record_count": record_count,
+            "confirmed_count": confirmed_count,
+            "abnormal_indicator_count": abnormal_count,
+            "recent_exam_date": recent_exam_date.isoformat() if recent_exam_date else None,
+        },
+        "recent_records": [item.to_dict(include_indicators=False) for item in recent],
+    }, 200
 
 
 @records_bp.get("")
@@ -353,6 +364,11 @@ def create_record():
 
     payload = request.get_json(silent=True) or {}
 
+    if payload.get("report_file_url") not in {None, ""}:
+        return {
+            "message": "report_file_url is managed by the server; upload the report file instead"
+        }, 400
+
     exam_date = _parse_exam_date(payload.get("exam_date"))
     if exam_date is None:
         return {"message": "exam_date is required and must be ISO date (YYYY-MM-DD)"}, 400
@@ -365,8 +381,14 @@ def create_record():
     if owner_error_payload:
         return owner_error_payload, owner_error_status
 
-    institution_id = _parse_optional_int(payload.get("institution_id"))
-    package_id = _parse_optional_int(payload.get("package_id"))
+    raw_institution_id = payload.get("institution_id")
+    raw_package_id = payload.get("package_id")
+    institution_id = _parse_optional_int(raw_institution_id)
+    package_id = _parse_optional_int(raw_package_id)
+    if raw_institution_id not in {None, ""} and institution_id is None:
+        return {"message": "institution_id must be integer"}, 400
+    if raw_package_id not in {None, ""} and package_id is None:
+        return {"message": "package_id must be integer"}, 400
 
     institution, package, error_payload, error_status = _validate_institution_package(institution_id, package_id)
     if error_payload:
@@ -382,7 +404,6 @@ def create_record():
         institution_id=institution.id if institution else None,
         package_id=package.id if package else None,
         exam_date=exam_date,
-        report_file_url=payload.get("report_file_url"),
         status=status,
     )
     db.session.add(record)
@@ -419,8 +440,14 @@ def upload_record_and_parse():
     if owner_error_payload:
         return owner_error_payload, owner_error_status
 
-    institution_id = _parse_optional_int(request.form.get("institution_id"))
-    package_id = _parse_optional_int(request.form.get("package_id"))
+    raw_institution_id = request.form.get("institution_id")
+    raw_package_id = request.form.get("package_id")
+    institution_id = _parse_optional_int(raw_institution_id)
+    package_id = _parse_optional_int(raw_package_id)
+    if raw_institution_id not in {None, ""} and institution_id is None:
+        return {"message": "institution_id must be integer"}, 400
+    if raw_package_id not in {None, ""} and package_id is None:
+        return {"message": "package_id must be integer"}, 400
 
     institution, package, error_payload, error_status = _validate_institution_package(institution_id, package_id)
     if error_payload:
@@ -454,8 +481,12 @@ def upload_record_and_parse():
             "message": "indicator dictionary is empty, please initialize seed data and retry",
         }, 503
 
-    mapping = mapping_service.map_fields(ocr_result.get("fields", []), indicator_dicts)
-    ocr_snapshot = _build_ocr_snapshot(ocr_result, mapping)
+    try:
+        mapping = mapping_service.map_fields(ocr_result.get("fields", []), indicator_dicts)
+        ocr_snapshot = _build_ocr_snapshot(ocr_result, mapping)
+    except Exception:
+        storage.delete(saved_file["key"])
+        raise
 
     record = HealthRecord(
         owner_id=owner_id,
@@ -468,8 +499,12 @@ def upload_record_and_parse():
         status="parsed",
     )
     db.session.add(record)
-
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        storage.delete(saved_file["key"])
+        raise
 
     return {
         "item": record.to_dict(include_indicators=True),
@@ -554,6 +589,19 @@ def get_record_detail(record_id: int):
     return {"item": record.to_dict(include_indicators=True)}, 200
 
 
+@records_bp.get("/<int:record_id>/file")
+@jwt_required()
+def download_record_file(record_id: int):
+    user = _current_user()
+    record = _get_accessible_record(record_id, user)
+    if record is None:
+        return {"message": "record not found"}, 404
+    report_path = report_file_path(record.report_file_url)
+    if report_path is None:
+        return {"message": "report file not found"}, 404
+    return send_file(report_path, as_attachment=True, download_name=report_path.name)
+
+
 @records_bp.put("/<int:record_id>")
 @jwt_required()
 def update_record(record_id: int):
@@ -577,22 +625,26 @@ def update_record(record_id: int):
         owner_id = _parse_optional_int(payload.get("owner_id"))
         if owner_id is None:
             return {"message": "owner_id must be integer"}, 400
-        owner_error_payload, owner_error_status = _validate_owner_manage_permission(user, owner_id)
-        if owner_error_payload:
-            return owner_error_payload, owner_error_status
-        record.owner_id = owner_id
+        if owner_id != record.owner_id:
+            return {
+                "message": "record owner cannot be changed through the regular user API"
+            }, 403
 
     institution_id = record.institution_id
     package_id = record.package_id
+    source_fields_changed = "institution_id" in payload or "package_id" in payload
 
     if "institution_id" in payload:
         raw_institution_id = payload.get("institution_id")
         if raw_institution_id in {None, ""}:
             institution_id = None
+            package_id = None
         else:
             institution_id = _parse_optional_int(raw_institution_id)
             if institution_id is None:
                 return {"message": "institution_id must be integer"}, 400
+            if institution_id != record.institution_id and "package_id" not in payload:
+                package_id = None
 
     if "package_id" in payload:
         raw_package_id = payload.get("package_id")
@@ -603,12 +655,16 @@ def update_record(record_id: int):
             if package_id is None:
                 return {"message": "package_id must be integer"}, 400
 
-    institution, package, error_payload, error_status = _validate_institution_package(institution_id, package_id)
-    if error_payload:
-        return error_payload, error_status
+    if source_fields_changed:
+        institution, package, error_payload, error_status = _validate_institution_package(
+            institution_id,
+            package_id,
+        )
+        if error_payload:
+            return error_payload, error_status
 
-    record.institution_id = institution.id if institution else None
-    record.package_id = package.id if package else None
+        record.institution_id = institution.id if institution else None
+        record.package_id = package.id if package else None
 
     if "status" in payload:
         status = payload.get("status")
@@ -631,8 +687,10 @@ def delete_record(record_id: int):
     if record is None:
         return {"message": "record not found"}, 404
 
+    report_file_url = record.report_file_url
     db.session.delete(record)
     db.session.commit()
+    delete_report_urls([report_file_url])
     return {"message": "record deleted"}, 200
 
 
@@ -662,11 +720,16 @@ def add_record_indicator(record_id: int):
     if existing is not None:
         return {"message": "indicator already exists in record"}, 409
 
+    try:
+        normalized_value = normalize_indicator_value(indicator_dict, value)
+    except IndicatorValueError as exc:
+        return {"message": str(exc)}, 400
+
     indicator = HealthIndicator(
         record_id=record.id,
         indicator_dict_id=indicator_dict_id,
-        value=str(value).strip(),
-        is_abnormal=_evaluate_is_abnormal(indicator_dict, value),
+        value=normalized_value,
+        is_abnormal=evaluate_is_abnormal(indicator_dict, normalized_value),
         source="manual",
     )
     db.session.add(indicator)
@@ -711,9 +774,14 @@ def update_record_indicator(record_id: int, indicator_id: int):
     if duplicate is not None:
         return {"message": "indicator already exists in record"}, 409
 
+    try:
+        normalized_value = normalize_indicator_value(indicator_dict, value)
+    except IndicatorValueError as exc:
+        return {"message": str(exc)}, 400
+
     indicator.indicator_dict_id = indicator_dict_id
-    indicator.value = str(value).strip()
-    indicator.is_abnormal = _evaluate_is_abnormal(indicator_dict, value)
+    indicator.value = normalized_value
+    indicator.is_abnormal = evaluate_is_abnormal(indicator_dict, normalized_value)
 
     db.session.commit()
     return {"item": indicator.to_dict()}, 200

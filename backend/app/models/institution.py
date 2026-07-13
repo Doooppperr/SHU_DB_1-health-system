@@ -24,10 +24,37 @@ class Institution(db.Model):
     closed_day = db.Column(db.String(20), nullable=True)
     description = db.Column(db.Text, nullable=True)
     logo_url = db.Column(db.String(255), nullable=True)
+    is_active = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=True,
+        server_default=db.true(),
+    )
 
     packages = db.relationship("Package", back_populates="institution", cascade="all, delete-orphan")
+    administrator = db.relationship(
+        "User",
+        back_populates="managed_institution",
+        foreign_keys="User.managed_institution_id",
+        uselist=False,
+    )
+    invite = db.relationship(
+        "InstitutionInvite",
+        back_populates="institution",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    images = db.relationship(
+        "InstitutionImage",
+        back_populates="institution",
+        cascade="all, delete-orphan",
+        order_by="InstitutionImage.sort_order.asc()",
+    )
 
     def to_dict(self):
+        image_items = [image.to_dict() for image in self.images]
+        cover_image_url = image_items[0]["image_url"] if image_items else self.logo_url
+        active_package_count = sum(1 for package in self.packages if package.is_active)
         return {
             "id": self.id,
             "name": self.name,
@@ -39,8 +66,14 @@ class Institution(db.Model):
             "ext": self.ext,
             "closed_day": self.closed_day,
             "description": self.description,
-            "logo_url": self.logo_url,
-            "package_count": len(self.packages),
+            # Keep logo_url as a compatibility alias while clients move to the
+            # ordered image collection.  The first image is always the cover.
+            "logo_url": cover_image_url,
+            "cover_image_url": cover_image_url,
+            "images": image_items,
+            "is_active": self.is_active,
+            "package_count": active_package_count,
+            "total_package_count": len(self.packages),
         }
 
 
@@ -61,6 +94,12 @@ class Package(db.Model):
     gender_scope = db.Column(db.String(40), nullable=False, default="all")
     price = db.Column(db.Numeric(10, 2), nullable=False, default=Decimal("0.00"))
     description = db.Column(db.Text, nullable=True)
+    is_active = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=True,
+        server_default=db.true(),
+    )
 
     institution = db.relationship("Institution", back_populates="packages")
 
@@ -73,4 +112,5 @@ class Package(db.Model):
             "gender_scope": self.gender_scope,
             "price": float(self.price),
             "description": self.description,
+            "is_active": self.is_active,
         }

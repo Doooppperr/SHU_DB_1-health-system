@@ -1,9 +1,16 @@
 from flask import request
-from flask_jwt_extended import get_jwt_identity, jwt_required
+from flask_jwt_extended import get_jwt_identity, jwt_required, verify_jwt_in_request
 
 from app.extensions import db
 from app.friends import friends_bp
 from app.models import FriendRelation, User
+from app.services.permissions import ROLE_USER, get_current_user, role_error
+
+
+@friends_bp.before_request
+def _require_regular_user_for_friends():
+    verify_jwt_in_request()
+    return role_error(get_current_user(), ROLE_USER)
 
 
 def _current_user_id() -> int:

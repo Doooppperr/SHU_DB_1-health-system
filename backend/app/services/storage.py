@@ -29,7 +29,12 @@ class LocalStorage(StorageBackend):
         extension = os.path.splitext(filename)[1].lower()
         safe_name = f"{uuid4().hex}{extension}"
 
-        save_dir = self.base_dir / subdir
+        base_dir = self.base_dir.resolve()
+        save_dir = (base_dir / subdir).resolve()
+        try:
+            save_dir.relative_to(base_dir)
+        except ValueError:
+            raise ValueError("storage subdirectory escapes the upload directory") from None
         save_dir.mkdir(parents=True, exist_ok=True)
 
         abs_path = save_dir / safe_name
@@ -46,7 +51,12 @@ class LocalStorage(StorageBackend):
         return f"{self.url_base}/{key}".replace("//", "/")
 
     def delete(self, key: str) -> None:
-        target = self.base_dir / key
+        base_dir = self.base_dir.resolve()
+        target = (base_dir / key).resolve()
+        try:
+            target.relative_to(base_dir)
+        except ValueError:
+            return
         if target.exists() and target.is_file():
             target.unlink()
 

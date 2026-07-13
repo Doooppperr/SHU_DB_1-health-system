@@ -1,5 +1,5 @@
 param(
-    [string]$ListenHost = "0.0.0.0",
+    [string]$ListenHost = "127.0.0.1",
     [int]$Port = 4173
 )
 

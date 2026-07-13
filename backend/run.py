@@ -7,4 +7,8 @@ app = create_app("development")
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("BACKEND_PORT", "5050")), threaded=True)
+    app.run(
+        host=os.getenv("BACKEND_HOST", "127.0.0.1"),
+        port=int(os.getenv("BACKEND_PORT", "5050")),
+        threaded=True,
+    )

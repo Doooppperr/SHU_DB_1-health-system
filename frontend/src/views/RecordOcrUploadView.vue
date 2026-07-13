@@ -42,8 +42,8 @@
           />
         </el-form-item>
 
-        <el-form-item label="体检机构" required>
-          <el-select v-model="form.institution_id" placeholder="请选择机构" style="width: 100%" @change="onInstitutionChange">
+        <el-form-item label="体检机构（可选）">
+          <el-select v-model="form.institution_id" clearable placeholder="暂不选取" style="width: 100%" @change="onInstitutionChange">
             <el-option
               v-for="institution in institutions"
               :key="institution.id"
@@ -53,10 +53,28 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item label="体检套餐" required>
-          <el-select v-model="form.package_id" placeholder="请选择套餐" style="width: 100%">
-            <el-option v-for="pkg in currentPackages" :key="pkg.id" :label="pkg.name" :value="pkg.id" />
+        <el-form-item label="体检套餐（可选）">
+          <el-select v-model="form.package_id" clearable placeholder="暂不选取" style="width: 100%" @change="onPackageChange">
+            <el-option v-for="pkg in currentPackages" :key="pkg.id" :label="packageLabel(pkg)" :value="pkg.id" />
           </el-select>
+        </el-form-item>
+
+        <el-form-item v-if="form.institution_id">
+          <el-alert
+            title="确认入档后，标准化档案信息和指标会自动向对应机构管理员只读开放。联系方式和原始报告不会开放。"
+            type="warning"
+            show-icon
+            :closable="false"
+          />
+        </el-form-item>
+
+        <el-form-item v-else>
+          <el-alert
+            title="未关联机构的档案只用于你的个人健康管理，不会向任何机构管理员展示。"
+            type="info"
+            show-icon
+            :closable="false"
+          />
         </el-form-item>
 
         <el-form-item label="报告文件" required>
@@ -228,11 +246,15 @@ const form = reactive({
 });
 
 const currentPackages = computed(() => {
-  if (!form.institution_id) {
-    return [];
-  }
-  return packageMap.value[form.institution_id] || [];
+  if (form.institution_id) return packageMap.value[form.institution_id] || [];
+  return Object.values(packageMap.value).flat();
 });
+
+const packageLabel = (pkg) => {
+  if (form.institution_id) return pkg.name;
+  const institution = institutions.value.find((item) => item.id === pkg.institution_id);
+  return institution ? `${pkg.name} · ${institution.name}` : pkg.name;
+};
 
 const ownerOptions = computed(() => {
   if (authStore.user?.role === "admin") {
@@ -292,10 +314,19 @@ const loadPackages = async (institutionId) => {
 
 const onInstitutionChange = async (institutionId) => {
   form.package_id = null;
+  if (!institutionId) return;
   try {
     await loadPackages(institutionId);
   } catch (error) {
     errorMessage.value = error?.response?.data?.message || "套餐加载失败";
+  }
+};
+
+const onPackageChange = (packageId) => {
+  if (!packageId) return;
+  const pkg = Object.values(packageMap.value).flat().find((item) => item.id === packageId);
+  if (pkg?.institution_id && form.institution_id !== pkg.institution_id) {
+    form.institution_id = pkg.institution_id;
   }
 };
 
@@ -310,8 +341,8 @@ const onFileRemove = () => {
 };
 
 const submitUpload = async () => {
-  if (!form.owner_id || !form.exam_date || !form.institution_id || !form.package_id) {
-    ElMessage.error("请先填写归属人、体检日期、机构和套餐");
+  if (!form.owner_id || !form.exam_date) {
+    ElMessage.error("请先填写档案归属人和体检日期");
     return;
   }
 
@@ -327,8 +358,8 @@ const submitUpload = async () => {
     const payload = new FormData();
     payload.append("owner_id", String(form.owner_id));
     payload.append("exam_date", form.exam_date);
-    payload.append("institution_id", String(form.institution_id));
-    payload.append("package_id", String(form.package_id));
+    if (form.institution_id) payload.append("institution_id", String(form.institution_id));
+    if (form.package_id) payload.append("package_id", String(form.package_id));
     payload.append("file", selectedFile.value);
 
     const { data } = await uploadRecordByOcr(payload);
@@ -424,6 +455,7 @@ onMounted(async () => {
     form.owner_id = authStore.user?.id || null;
     const ownerLoader = authStore.user?.role === "admin" ? loadAdminUsers() : loadFriends();
     await Promise.all([loadInstitutions(), ownerLoader, loadIndicatorDicts()]);
+    await Promise.all(institutions.value.map((institution) => loadPackages(institution.id)));
   } catch (error) {
     errorMessage.value = error?.response?.data?.message || "页面初始化失败";
   }
