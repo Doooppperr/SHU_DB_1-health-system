@@ -7,6 +7,7 @@
           <MainNavActions>
             <template #prefix>
               <el-button plain @click="goBack">返回列表</el-button>
+              <el-button type="primary" @click="goRegistration">登记体检</el-button>
             </template>
           </MainNavActions>
         </div>
@@ -58,7 +59,7 @@
               :rows="3"
               maxlength="1000"
               show-word-limit
-              placeholder="请输入评论内容（需先上传该机构体检档案）"
+              placeholder="请输入评论内容（需有该机构已匹配报告）"
             />
             <el-button type="primary" :loading="commentSubmitting" @click="submitComment">提交评论</el-button>
           </div>
@@ -94,11 +95,9 @@ import MainNavActions from "../components/MainNavActions.vue";
 import InstitutionCoverImage from "../components/InstitutionCoverImage.vue";
 import { createInstitutionComment, fetchInstitutionComments } from "../api/comments";
 import { fetchInstitutionDetail, fetchInstitutionPackages } from "../api/institutions";
-import { useAuthStore } from "../stores/auth";
 
 const route = useRoute();
 const router = useRouter();
-const authStore = useAuthStore();
 
 const loading = ref(false);
 const errorMessage = ref("");
@@ -165,7 +164,7 @@ const submitComment = async () => {
       errorCode === "comment_requires_record"
       || backendMessage === "upload a record for this institution before commenting"
     ) {
-      ElMessage.error("请先在该机构创建或上传一份体检档案，再提交评论");
+      ElMessage.error("请先取得该机构已匹配的体检报告，再提交评论");
       return;
     }
     ElMessage.error(backendMessage || "评论提交失败");
@@ -178,29 +177,8 @@ const goBack = () => {
   router.push({ name: "institutions" });
 };
 
-const goRecords = () => {
-  router.push({ name: "records" });
-};
-
-const goTrends = () => {
-  router.push({ name: "trends" });
-};
-
-const goFriends = () => {
-  router.push({ name: "friends" });
-};
-
-const goCommentModeration = () => {
-  router.push({ name: "comment-moderation" });
-};
-
-const goProfile = () => {
-  router.push({ name: "profile" });
-};
-
-const logout = () => {
-  authStore.logout();
-  router.push({ name: "login" });
+const goRegistration = () => {
+  router.push({ name: "registrations", query: { institution_id: route.params.id } });
 };
 
 watch(

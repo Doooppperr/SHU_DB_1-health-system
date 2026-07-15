@@ -1,7 +1,7 @@
 import http from "./http";
 
 export function fetchUserDashboard() {
-  return http.get("/records/summary");
+  return http.get("/health/timeline");
 }
 
 export function fetchOrgDashboard() {

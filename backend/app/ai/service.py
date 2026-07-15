@@ -624,6 +624,7 @@ def build_analysis_facts(
             "record_display_id": record.display_id,
             "exam_date": record.exam_date.isoformat(),
             "institution": record.institution.name if record.institution else "未填写机构",
+            "source": "institution_report",
             "indicators": [],
         }
         for item in record.indicators:
@@ -654,6 +655,7 @@ def build_analysis_facts(
                 "value_type": definition.value_type,
                 "reference": reference,
                 "status": "异常" if item.is_abnormal else "正常",
+                "source": "institution_report",
             }
             record_fact["indicators"].append(indicator_fact)
             definitions[definition.code] = {

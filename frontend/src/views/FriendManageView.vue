@@ -210,10 +210,6 @@ const goInstitutions = () => {
   router.push({ name: "institutions" });
 };
 
-const goRecords = () => {
-  router.push({ name: "records" });
-};
-
 const goTrends = () => {
   router.push({ name: "trends" });
 };

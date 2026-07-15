@@ -1,10 +1,14 @@
 import os
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from flask import current_app
 
 from app.extensions import db
-from app.models import IndicatorCategory, IndicatorDict, Institution, Package, User
+from app.models import (
+    ExamRegistration, FriendRelation, IndicatorCategory, IndicatorDict,
+    Institution, InstitutionReport, Package, ReportIndicator, SelfMeasurement, User,
+)
 
 
 INSTITUTION_SEEDS = [
@@ -91,6 +95,41 @@ INDICATOR_CATEGORY_SEEDS = [
 
 INDICATOR_DICT_SEEDS = [
     {
+        "category": "一般检查", "code": "HEIGHT", "name": "身高",
+        "aliases": ["身高", "HEIGHT"], "unit": "cm",
+        "reference_low": None, "reference_high": None,
+        "clinical_significance": "用于观察生长发育与体型变化。", "value_type": "numeric",
+        "allow_self_measurement": True,
+    },
+    {
+        "category": "一般检查", "code": "WEIGHT", "name": "体重",
+        "aliases": ["体重", "WEIGHT"], "unit": "kg",
+        "reference_low": None, "reference_high": None,
+        "clinical_significance": "体重变化可辅助评估营养和代谢状态。", "value_type": "numeric",
+        "allow_self_measurement": True,
+    },
+    {
+        "category": "一般检查", "code": "HR", "name": "心率",
+        "aliases": ["心率", "脉搏", "HR"], "unit": "次/分",
+        "reference_low": Decimal("60"), "reference_high": Decimal("100"),
+        "clinical_significance": "静息心率异常时建议结合症状咨询专业人员。", "value_type": "numeric",
+        "allow_self_measurement": True,
+    },
+    {
+        "category": "一般检查", "code": "TEMP", "name": "体温",
+        "aliases": ["体温", "TEMP"], "unit": "℃",
+        "reference_low": Decimal("36.0"), "reference_high": Decimal("37.3"),
+        "clinical_significance": "体温异常可提示感染或其他生理变化。", "value_type": "numeric",
+        "allow_self_measurement": True,
+    },
+    {
+        "category": "一般检查", "code": "SPO2", "name": "血氧",
+        "aliases": ["血氧", "血氧饱和度", "SpO2"], "unit": "%",
+        "reference_low": Decimal("95"), "reference_high": Decimal("100"),
+        "clinical_significance": "持续偏低时应及时寻求专业医疗帮助。", "value_type": "numeric",
+        "allow_self_measurement": True,
+    },
+    {
         "category": "一般检查",
         "code": "BMI",
         "name": "体重指数",
@@ -111,6 +150,7 @@ INDICATOR_DICT_SEEDS = [
         "reference_high": Decimal("6.10"),
         "clinical_significance": "升高提示糖代谢异常风险。",
         "value_type": "numeric",
+        "allow_self_measurement": True,
     },
     {
         "category": "血脂",
@@ -245,6 +285,7 @@ def seed_indicator_dicts():
             reference_high=item["reference_high"],
             clinical_significance=item["clinical_significance"],
             value_type=item["value_type"],
+            allow_self_measurement=item.get("allow_self_measurement", False),
         )
         db.session.add(indicator)
 
@@ -255,6 +296,295 @@ def seed_core_data():
     seed_admin_user()
     seed_institutions_and_packages()
     seed_indicator_dicts()
+    seed_demo_data()
+
+
+def _seed_self_measurements(user, index, indicators, now):
+    """Create a dense, deterministic timeline for one synthetic user."""
+    base_weight = Decimal("58.0") + Decimal(index * 4)
+    height = Decimal("158.0") + Decimal(index * 3)
+    db.session.add(SelfMeasurement(
+        user_id=user.id,
+        indicator_dict_id=indicators["HEIGHT"].id,
+        value=height,
+        measured_at=now - timedelta(days=120 - index),
+    ))
+
+    measurement_series = {
+        "WEIGHT": [base_weight + Decimal(step) / Decimal("10") for step in (5, 4, 3, 5, 2, 1, 0, -1)],
+        "HR": [68 + index, 72 + index, 70 + index, 75 + index, 69 + index, 71 + index],
+        "FBG": [Decimal("4.7") + Decimal(index) / 10, Decimal("4.9") + Decimal(index) / 10,
+                Decimal("5.0") + Decimal(index) / 10, Decimal("5.1") + Decimal(index) / 10],
+        "TEMP": [Decimal("36.4"), Decimal("36.6"), Decimal("36.5"), Decimal("36.7")],
+        "SPO2": [99 - index % 2, 98, 99, 97 + index % 3],
+    }
+    day_steps = {
+        "WEIGHT": (56, 49, 42, 35, 28, 21, 14, 7),
+        "HR": (45, 36, 27, 18, 9, 2),
+        "FBG": (48, 32, 16, 3),
+        "TEMP": (30, 20, 10, 1),
+        "SPO2": (24, 16, 8, 1),
+    }
+    for code, values in measurement_series.items():
+        for sequence, (days_ago, value) in enumerate(zip(day_steps[code], values)):
+            db.session.add(SelfMeasurement(
+                user_id=user.id,
+                indicator_dict_id=indicators[code].id,
+                value=value,
+                measured_at=(now - timedelta(days=days_ago)).replace(
+                    hour=7 + sequence % 3,
+                    minute=(index * 7 + sequence * 11) % 60,
+                    second=0,
+                    microsecond=0,
+                ),
+            ))
+
+
+def _seed_published_report(
+    *, user, institution, staff_user, package, exam_day, indicators, now, index,
+    weight_value=None,
+):
+    registration = ExamRegistration(
+        user_id=user.id,
+        institution_id=institution.id,
+        package_id=package.id,
+        exam_date=exam_day,
+        status="matched",
+    )
+    db.session.add(registration)
+    db.session.flush()
+    report = InstitutionReport(
+        institution_id=institution.id,
+        created_by_user_id=staff_user.id,
+        created_by_username_snapshot=staff_user.username,
+        subject_name_snapshot=user.real_name,
+        subject_health_id=user.health_id,
+        exam_date=exam_day,
+        package_id=package.id,
+        matched_user_id=user.id,
+        exam_registration_id=registration.id,
+        status="published",
+        locked_at=datetime.combine(exam_day, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=11),
+        submitted_at=datetime.combine(exam_day, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=12),
+        published_at=datetime.combine(exam_day, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=12),
+        created_at=min(now, datetime.combine(exam_day, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=9)),
+    )
+    db.session.add(report)
+    db.session.flush()
+    registration.matched_report_id = report.id
+
+    values = {
+        "WEIGHT": weight_value or f"{62 + index * 4 + (exam_day.toordinal() % 3) / 10:.1f}",
+        "BMI": f"{20.2 + index * 0.6:.1f}",
+        "HR": str(67 + index * 3),
+        "FBG": "5.2" if weight_value == "71.9" else f"{4.7 + index * 0.25:.1f}",
+        "TC": f"{4.1 + index * 0.25:.1f}",
+        "ALT": str(18 + index * 5),
+        "UA": str(250 + index * 28),
+    }
+    abnormal_codes = {"FBG", "TC"} if index == 5 else set()
+    report.indicators.extend([
+        ReportIndicator(
+            indicator_dict_id=indicators[code].id,
+            value=value,
+            is_abnormal=code in abnormal_codes,
+            input_source="ocr" if position % 3 == 1 else "manual",
+        )
+        for position, (code, value) in enumerate(values.items())
+    ])
+    return report
+
+
+def seed_demo_data():
+    if User.query.filter_by(username="test1").first() is not None:
+        return
+    institutions = Institution.query.order_by(Institution.id).limit(3).all()
+    if len(institutions) < 3:
+        return
+
+    password = "Shuhealthdoc！"
+    demo_admin = User(username="demo_admin", role="admin", email="demo-admin@example.test")
+    demo_admin.set_password(password)
+    db.session.add(demo_admin)
+
+    profile_seeds = (
+        ("test1", "演示用户1", "male", "无已知过敏", "模拟轻度脂代谢关注"),
+        ("test2", "演示用户2", "female", "无已知过敏", "模拟血糖随访资料"),
+        ("test3", "演示用户3", "male", "青霉素过敏", "模拟常规年度体检资料"),
+        ("test4", "演示用户4", "female", "海鲜过敏", "模拟心率与体重管理资料"),
+        ("test5", "演示用户5", "other", "无已知过敏", "模拟多指标异常关注资料"),
+    )
+    people = []
+    for index, (username, real_name, gender, allergy, history) in enumerate(profile_seeds, start=1):
+        user = User(
+            username=username,
+            role="user",
+            health_id=f"HID-DEMO000{index}",
+            real_name=real_name,
+            birth_date=date(1983 + index * 5, index, min(index * 4, 28)),
+            gender=gender,
+            allergy_history=allergy,
+            medical_history=history,
+            email=f"{username}@example.test",
+            phone=f"138000000{index:02d}",
+        )
+        user.set_password(password)
+        db.session.add(user)
+        people.append(user)
+
+    staff_by_institution = []
+    for institution_index, institution in enumerate(institutions, start=1):
+        institution_staff = []
+        for staff_index in (1, 2):
+            user = User(
+                username=f"institution{institution_index}_staff{staff_index}",
+                role="institution_admin",
+                managed_institution_id=institution.id,
+                email=f"institution{institution_index}-staff{staff_index}@example.test",
+            )
+            user.set_password(password)
+            db.session.add(user)
+            institution_staff.append(user)
+        staff_by_institution.append(institution_staff)
+    db.session.flush()
+
+    for viewer, owner, relation_name, authorized in (
+        (people[0], people[1], "家人", True),
+        (people[0], people[2], "父母", True),
+        (people[1], people[3], "家人", True),
+        (people[3], people[4], "朋友", False),
+    ):
+        db.session.add(FriendRelation(
+            user_id=viewer.id,
+            friend_user_id=owner.id,
+            relation_name=relation_name,
+            auth_status=authorized,
+        ))
+
+    indicators = {row.code: row for row in IndicatorDict.query.all()}
+    now = datetime.now(timezone.utc)
+    today = date.today()
+    for index, person in enumerate(people, start=1):
+        _seed_self_measurements(person, index, indicators, now)
+
+        old_institution_index = (index - 1) % len(institutions)
+        old_institution = institutions[old_institution_index]
+        _seed_published_report(
+            user=person,
+            institution=old_institution,
+            staff_user=staff_by_institution[old_institution_index][0],
+            package=old_institution.packages[(index - 1) % len(old_institution.packages)],
+            exam_day=today - timedelta(days=62 + index * 3),
+            indicators=indicators,
+            now=now,
+            index=index,
+        )
+
+        if index != 1:
+            recent_institution_index = index % len(institutions)
+            recent_institution = institutions[recent_institution_index]
+            _seed_published_report(
+                user=person,
+                institution=recent_institution,
+                staff_user=staff_by_institution[recent_institution_index][1],
+                package=recent_institution.packages[index % len(recent_institution.packages)],
+                exam_day=today - timedelta(days=8 + index * 2),
+                indicators=indicators,
+                now=now,
+                index=index,
+            )
+
+        pending_institution = institutions[(index + 1) % len(institutions)]
+        db.session.add(ExamRegistration(
+            user_id=person.id,
+            institution_id=pending_institution.id,
+            package_id=pending_institution.packages[index % len(pending_institution.packages)].id,
+            exam_date=today - timedelta(days=index),
+            status="awaiting_report",
+            created_at=now - timedelta(days=index + 3),
+        ))
+        cancelled_institution = institutions[(index + 2) % len(institutions)]
+        db.session.add(ExamRegistration(
+            user_id=person.id,
+            institution_id=cancelled_institution.id,
+            package_id=None,
+            exam_date=today - timedelta(days=25 + index),
+            status="cancelled",
+            created_at=now - timedelta(days=35 + index),
+            cancelled_at=now - timedelta(days=30 + index),
+        ))
+
+    # Fixed test1 report retains the exact trend-priority fixture used by the tests.
+    exam_day = today - timedelta(days=4)
+    _seed_published_report(
+        user=people[0],
+        institution=institutions[0],
+        staff_user=staff_by_institution[0][0],
+        package=institutions[0].packages[0],
+        exam_day=exam_day,
+        indicators=indicators,
+        now=now,
+        index=1,
+        weight_value="71.9",
+    )
+    for hour, value in ((8, Decimal("72.2")), (20, Decimal("72.0"))):
+        db.session.add(SelfMeasurement(
+            user_id=people[0].id,
+            indicator_dict_id=indicators["WEIGHT"].id,
+            value=value,
+            measured_at=datetime.combine(exam_day, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=hour),
+        ))
+    db.session.add(SelfMeasurement(
+        user_id=people[0].id,
+        indicator_dict_id=indicators["HR"].id,
+        value=78,
+        measured_at=datetime.combine(exam_day, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=21),
+    ))
+
+    waiting_day = today - timedelta(days=2)
+    waiting_staff = staff_by_institution[1][0]
+    waiting = InstitutionReport(
+        institution_id=institutions[1].id,
+        created_by_user_id=waiting_staff.id,
+        created_by_username_snapshot=waiting_staff.username,
+        subject_name_snapshot="尚未登记用户",
+        subject_health_id="HID-WAIT0001",
+        exam_date=waiting_day,
+        status="waiting_match",
+        locked_at=now - timedelta(days=2),
+        submitted_at=now - timedelta(days=2),
+        expires_at=now + timedelta(days=58),
+    )
+    db.session.add(waiting)
+    db.session.flush()
+    waiting.indicators.append(ReportIndicator(
+        indicator_dict_id=indicators["HR"].id,
+        value="74",
+        input_source="manual",
+    ))
+
+    withdrawn = InstitutionReport(
+        institution_id=institutions[1].id,
+        created_by_user_id=waiting_staff.id,
+        created_by_username_snapshot=waiting_staff.username,
+        subject_name_snapshot=people[1].real_name,
+        subject_health_id=people[1].health_id,
+        exam_date=today - timedelta(days=20),
+        matched_user_id=people[1].id,
+        status="withdrawn",
+        locked_at=now - timedelta(days=20),
+        submitted_at=now - timedelta(days=20),
+        published_at=now - timedelta(days=20),
+        withdrawn_at=now - timedelta(days=10),
+    )
+    db.session.add(withdrawn)
+    db.session.flush()
+    withdrawn.indicators.append(ReportIndicator(
+        indicator_dict_id=indicators["FBG"].id,
+        value="5.8",
+        input_source="manual",
+    ))
+    db.session.commit()
 
 
 def seed_admin_user():
@@ -294,9 +624,13 @@ def seed_admin_user():
                 )
             admin.set_password(configured_admin_password)
             password_changed = True
-        if admin.role != "admin" or admin.managed_institution_id is not None:
+        if admin.role != "admin" or admin.managed_institution_id is not None or admin.health_id is not None:
             admin.role = "admin"
             admin.managed_institution_id = None
+            admin.health_id = None
+            password_changed = True
+        if not admin.is_active:
+            admin.is_active = True
             password_changed = True
         if password_changed:
             db.session.commit()

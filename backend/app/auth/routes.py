@@ -21,6 +21,7 @@ from app.models import InstitutionInvite, User
 
 
 CAPTCHA_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+HEALTH_ID_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 _captcha_store = {}
 
 
@@ -122,6 +123,14 @@ def _invite_code_hash(invite_code: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def _new_health_id() -> str:
+    for _ in range(20):
+        candidate = "HID-" + "".join(secrets.choice(HEALTH_ID_ALPHABET) for _ in range(8))
+        if User.query.filter_by(health_id=candidate).first() is None:
+            return candidate
+    raise RuntimeError("unable to allocate a unique health identity")
+
+
 @auth_bp.get("/captcha")
 def captcha():
     challenge_id, code, image = _create_captcha_challenge()
@@ -171,11 +180,6 @@ def register():
             return {"message": "invalid or unavailable invitation code"}, 400
         if invite.institution is None or not invite.institution.is_active:
             return {"message": "invitation institution is inactive"}, 400
-        existing_manager = User.query.filter_by(
-            managed_institution_id=invite.institution_id
-        ).first()
-        if existing_manager is not None:
-            return {"message": "institution already has an administrator"}, 409
         expected_invite_hash = invite.code_hash
 
     user = User(
@@ -184,6 +188,7 @@ def register():
         phone=phone,
         role="institution_admin" if invite else "user",
         managed_institution_id=invite.institution_id if invite else None,
+        health_id=None if invite else _new_health_id(),
     )
     user.set_password(password)
     try:
@@ -233,6 +238,12 @@ def login():
     user = User.query.filter_by(username=username).first()
     if user is None or not user.check_password(password):
         return {"message": "invalid username or password"}, 401
+    if not user.is_active:
+        return {"message": "account is inactive"}, 403
+    if user.role == "institution_admin" and (
+        user.managed_institution is None or not user.managed_institution.is_active
+    ):
+        return {"message": "institution is inactive"}, 403
 
     return _build_auth_payload(user, "login success"), 200
 
@@ -244,6 +255,8 @@ def refresh_token():
     user = db.session.get(User, int(user_id))
     if user is None:
         return {"message": "user not found"}, 404
+    if not user.is_active:
+        return {"message": "account is inactive"}, 403
 
     access_token = create_access_token(identity=str(user.id), additional_claims={"role": user.role})
     return {"access_token": access_token}, 200

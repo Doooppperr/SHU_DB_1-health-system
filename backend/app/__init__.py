@@ -9,15 +9,15 @@ from .comments import comments_bp
 from .config import config_by_name
 from .extensions import db, init_extensions
 from .friends import friends_bp
+from .health import health_bp
 from .indicators import indicators_bp
 from .institutions import institutions_bp
-from .institution_health import institution_health_bp
+from .exam_reports import exam_reports_bp
 from .models import InstitutionImage
 from .org import org_bp
-from .records import records_bp
+from .profile import profile_bp
 from .schema import initialize_or_validate_schema
 from .seed import seed_core_data
-from .trends import trends_bp
 from .users import users_bp
 
 
@@ -43,17 +43,20 @@ def create_app(config_name="development"):
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
     app.register_blueprint(ai_bp, url_prefix="/api/ai")
     app.register_blueprint(users_bp, url_prefix="/api/users")
+    app.register_blueprint(profile_bp, url_prefix="/api/profile")
+    app.register_blueprint(health_bp, url_prefix="/api")
+    app.register_blueprint(exam_reports_bp, url_prefix="/api/exam-reports")
     app.register_blueprint(friends_bp, url_prefix="/api/friends")
     app.register_blueprint(institutions_bp, url_prefix="/api/institutions")
     app.register_blueprint(org_bp, url_prefix="/api/org")
-    app.register_blueprint(
-        institution_health_bp,
-        url_prefix="/api/institution-health",
-    )
-    app.register_blueprint(records_bp, url_prefix="/api/records")
     app.register_blueprint(indicators_bp, url_prefix="/api/indicators")
     app.register_blueprint(comments_bp, url_prefix="/api/comments")
-    app.register_blueprint(trends_bp, url_prefix="/api/trends")
+
+    @app.cli.command("cleanup-expired-reports")
+    def cleanup_expired_reports_command():
+        from .services.reports import cleanup_expired_reports
+        deleted_ids = cleanup_expired_reports()
+        print(f"deleted {len(deleted_ids)} expired unmatched report(s)")
 
     @app.get("/api/health")
     def health_check():
@@ -82,5 +85,7 @@ def create_app(config_name="development"):
         Path(app.config["UPLOAD_DIR"]).mkdir(parents=True, exist_ok=True)
         initialize_or_validate_schema()
         seed_core_data()
+        from .services.reports import cleanup_expired_reports
+        cleanup_expired_reports()
 
     return app

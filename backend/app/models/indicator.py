@@ -46,7 +46,11 @@ class IndicatorDict(db.Model):
     value_type = db.Column(db.String(20), nullable=False, default="numeric")
 
     category = db.relationship("IndicatorCategory", back_populates="indicators")
-    indicators = db.relationship("HealthIndicator", back_populates="indicator_dict")
+    allow_self_measurement = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=db.false()
+    )
+
+    report_indicators = db.relationship("ReportIndicator", back_populates="indicator_dict")
 
     def to_dict(self):
         return {
@@ -61,4 +65,5 @@ class IndicatorDict(db.Model):
             "reference_high": float(self.reference_high) if self.reference_high is not None else None,
             "clinical_significance": self.clinical_significance,
             "value_type": self.value_type,
+            "allow_self_measurement": self.allow_self_measurement,
         }

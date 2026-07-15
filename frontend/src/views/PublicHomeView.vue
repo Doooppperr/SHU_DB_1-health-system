@@ -29,12 +29,12 @@
           <p class="portal-kicker">个人健康数据，清晰可见、安全可控</p>
           <h1>让每一次体检，<br /><span>都成为长期健康的线索</span></h1>
           <p class="portal-lead">
-            集中管理本人和亲友的健康档案，通过 OCR 快速录入、趋势追踪和分级授权，
-            在个人、体检机构与平台之间建立清晰的数据边界。
+            由体检机构提交标准化报告，个人记录日常测量并授权亲友只读查看，
+            在健康时间线中持续追踪趋势，同时保持清晰的数据边界。
           </p>
           <div class="portal-hero-actions">
             <el-button type="primary" size="large" round @click="primaryAction">
-              {{ authStore.accessToken ? "进入我的工作台" : "开始建立健康档案" }}
+              {{ authStore.accessToken ? "进入我的工作台" : "开始建立健康视图" }}
             </el-button>
             <a href="#features">了解系统能力 <span>→</span></a>
           </div>
@@ -56,13 +56,13 @@
               <span v-for="height in chartBars" :key="height" :style="{ height: `${height}%` }" />
             </div>
             <div class="portal-metric-row">
-              <div><small>已确认档案</small><strong>12</strong></div>
+              <div><small>机构报告</small><strong>12</strong></div>
               <div><small>跟踪指标</small><strong>28</strong></div>
               <div><small>授权亲友</small><strong>3</strong></div>
             </div>
           </div>
           <div class="portal-product-notes" aria-label="产品能力摘要">
-            <span><b>OCR</b> 报告识别后由用户确认</span>
+            <span><b>OCR</b> 机构识别并人工复核</span>
             <span><b>趋势</b> 同口径指标持续追踪</span>
             <span><b>隐私</b> 数据开放边界清晰</span>
           </div>
@@ -72,8 +72,8 @@
       <section id="features" class="portal-section portal-features">
         <div class="portal-section-heading">
           <p>CORE CAPABILITIES</p>
-          <h2>围绕健康档案的一站式服务</h2>
-          <span>从录入、确认到长期趋势，以更少操作沉淀更可靠的数据。</span>
+          <h2>围绕健康时间线的一站式服务</h2>
+          <span>机构体检与日常自测统一汇总，形成可追踪的长期趋势。</span>
         </div>
         <div class="portal-feature-grid">
           <article v-for="feature in features" :key="feature.title">
@@ -104,14 +104,14 @@
           <p class="portal-kicker">PRIVACY BY DESIGN</p>
           <h2>数据属于你，开放范围由你决定</h2>
           <p>
-            未关联机构的档案只服务于个人健康管理；关联机构的已确认标准化数据，
-            才会向对应机构管理员只读开放。联系方式和原始报告不在开放范围内。
+            机构只生产本机构报告，不能浏览用户登记列表或其他健康信息；亲友只有在明确授权后，
+            才能只读查看健康时间线。联系方式、健康身份码和个人资料始终隔离。
           </p>
         </div>
         <div class="portal-privacy-list">
           <div><span>01</span><p><strong>角色隔离</strong><small>用户、机构管理员与系统管理员拥有独立工作台和接口。</small></p></div>
-          <div><span>02</span><p><strong>最小开放</strong><small>机构仅查看来源于本机构且已确认的结构化健康数据。</small></p></div>
-          <div><span>03</span><p><strong>报告保护</strong><small>健康报告通过身份鉴权访问，不作为公共文件暴露。</small></p></div>
+          <div><span>02</span><p><strong>最小开放</strong><small>机构只管理自己创建的报告，管理员不接触任何健康内容。</small></p></div>
+          <div><span>03</span><p><strong>报告保护</strong><small>用户只读查看标准化指标，OCR 原文件在机构锁定时删除。</small></p></div>
         </div>
       </section>
 
@@ -121,7 +121,7 @@
           <h2>用可靠的数据连接每一段健康旅程</h2>
         </div>
         <p>
-          康康健健是面向个人健康档案管理的课程实践项目。我们重视易用性，也坚持权限边界、
+          康康健健是面向个人连续健康管理的课程实践项目。我们重视易用性，也坚持权限边界、
           数据可追溯和健康建议的谨慎表达，让技术真正服务于长期健康管理。
         </p>
       </section>
@@ -145,15 +145,15 @@ const router = useRouter();
 const authStore = useAuthStore();
 const chartBars = [34, 48, 42, 63, 56, 76, 68, 83, 74, 91];
 const features = [
-  { icon: "档", title: "健康档案", description: "统一管理本人及已授权亲友的体检记录与标准化指标。", note: "手工录入 · 状态确认" },
-  { icon: "OCR", title: "报告智能识别", description: "上传 PDF 或图片，自动提取候选指标并由你核对后入档。", note: "先确认 · 后归档" },
-  { icon: "趋", title: "指标趋势", description: "按归属人与指标查看时间变化，快速理解长期健康线索。", note: "同口径 · 可追踪" },
-  { icon: "友", title: "亲友授权", description: "通过明确授权协助家人管理档案，授权可随时调整。", note: "可控授权 · 清晰边界" },
+  { icon: "线", title: "健康时间线", description: "统一查看机构体检、登记状态和每一条日常测量。", note: "统一视图 · 来源清晰" },
+  { icon: "OCR", title: "机构报告生产", description: "机构通过 OCR 或手工录入，复核锁定后精确匹配给用户。", note: "机构负责 · 用户只读" },
+  { icon: "趋", title: "指标趋势", description: "同日机构指标优先，缺失时采用用户当天最后一次自测。", note: "确定规则 · 原始值保留" },
+  { icon: "友", title: "亲友授权", description: "授权亲友只读查看健康数据，个人资料始终隐藏。", note: "可控授权 · 清晰边界" },
 ];
 const steps = [
-  { title: "创建或上传档案", description: "手工创建档案，或上传报告让 OCR 帮你提取候选数据。" },
-  { title: "核对并确认指标", description: "检查归属人、来源与指标映射，确认后沉淀为正式档案。" },
-  { title: "持续观察趋势", description: "结合历次体检查看趋势，在需要时向专业医生咨询。" },
+  { title: "登记体检", description: "选择体检机构、日期和可选套餐，等待机构提交报告。" },
+  { title: "机构提交报告", description: "机构复核标准指标并锁定，通过四项条件精确匹配。" },
+  { title: "记录并观察趋势", description: "记录日常自测，与机构数据一起形成每日有效趋势。" },
 ];
 
 function enterWorkspace() {

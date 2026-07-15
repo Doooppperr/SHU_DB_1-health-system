@@ -9,5 +9,5 @@ export function updateUser(userId, payload) {
 }
 
 export function deleteUser(userId) {
-  return http.delete(`/users/${userId}`);
+  return http.delete(`/users/${userId}`, { data: { confirm: true } });
 }

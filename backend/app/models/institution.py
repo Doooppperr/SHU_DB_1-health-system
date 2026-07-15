@@ -32,11 +32,10 @@ class Institution(db.Model):
     )
 
     packages = db.relationship("Package", back_populates="institution", cascade="all, delete-orphan")
-    administrator = db.relationship(
+    administrators = db.relationship(
         "User",
         back_populates="managed_institution",
         foreign_keys="User.managed_institution_id",
-        uselist=False,
     )
     invite = db.relationship(
         "InstitutionInvite",
@@ -50,6 +49,11 @@ class Institution(db.Model):
         cascade="all, delete-orphan",
         order_by="InstitutionImage.sort_order.asc()",
     )
+
+    @property
+    def administrator(self):
+        """Compatibility accessor for older presentation helpers."""
+        return self.administrators[0] if self.administrators else None
 
     def to_dict(self):
         image_items = [image.to_dict() for image in self.images]

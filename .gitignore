@@ -19,6 +19,10 @@ backend/.env.*
 backend/instance/*.db
 backend/instance/*.sqlite
 backend/instance/*.sqlite3
+# The repository intentionally carries one synthetic demo snapshot. Timestamped
+# migration/refresh backups remain ignored by the patterns above.
+!backend/instance/health_system.db
+backend/instance/rag/
 scripts/*.log
 *.log
 

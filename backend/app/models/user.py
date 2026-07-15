@@ -5,13 +5,13 @@ import bcrypt
 from app.extensions import db
 
 
+def utc_now():
+    return datetime.now(timezone.utc)
+
+
 class User(db.Model):
     __tablename__ = "users"
     __table_args__ = (
-        db.UniqueConstraint(
-            "managed_institution_id",
-            name="uq_users_managed_institution",
-        ),
         db.CheckConstraint(
             "role in ('user', 'institution_admin', 'admin')",
             name="ck_users_role",
@@ -20,6 +20,15 @@ class User(db.Model):
             "(role = 'institution_admin' and managed_institution_id is not null) "
             "or (role in ('user', 'admin') and managed_institution_id is null)",
             name="ck_users_role_institution_binding",
+        ),
+        db.CheckConstraint(
+            "(role = 'user' and health_id is not null) or "
+            "(role in ('institution_admin', 'admin') and health_id is null)",
+            name="ck_users_role_health_identity",
+        ),
+        db.CheckConstraint(
+            "gender is null or gender in ('male', 'female', 'other', 'undisclosed')",
+            name="ck_users_gender",
         ),
         db.CheckConstraint("length(trim(username)) > 0", name="ck_users_username_not_blank"),
     )
@@ -36,13 +45,19 @@ class User(db.Model):
         nullable=True,
         index=True,
     )
-    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    health_id = db.Column(db.String(20), unique=True, nullable=True, index=True)
+    real_name = db.Column(db.String(80), nullable=True)
+    birth_date = db.Column(db.Date, nullable=True)
+    gender = db.Column(db.String(20), nullable=True)
+    allergy_history = db.Column(db.Text, nullable=True)
+    medical_history = db.Column(db.Text, nullable=True)
+    is_active = db.Column(db.Boolean, nullable=False, default=True, server_default=db.true())
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
 
     managed_institution = db.relationship(
         "Institution",
-        back_populates="administrator",
+        back_populates="administrators",
         foreign_keys=[managed_institution_id],
-        uselist=False,
     )
     issued_institution_invites = db.relationship(
         "InstitutionInvite",
@@ -54,11 +69,6 @@ class User(db.Model):
         back_populates="used_by_user",
         foreign_keys="InstitutionInvite.used_by_user_id",
     )
-    revoked_institution_invites = db.relationship(
-        "InstitutionInvite",
-        back_populates="revoked_by_admin",
-        foreign_keys="InstitutionInvite.revoked_by_admin_id",
-    )
 
     def set_password(self, password: str) -> None:
         self.password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
@@ -66,23 +76,37 @@ class User(db.Model):
     def check_password(self, password: str) -> bool:
         return bcrypt.checkpw(password.encode("utf-8"), self.password_hash.encode("utf-8"))
 
-    def to_dict(self) -> dict:
-        managed_institution = None
+    def to_dict(self, *, include_profile: bool = True) -> dict:
+        institution = None
         if self.managed_institution is not None:
-            managed_institution = {
+            institution = {
                 "id": self.managed_institution.id,
                 "name": self.managed_institution.name,
                 "branch_name": self.managed_institution.branch_name,
                 "is_active": self.managed_institution.is_active,
             }
-
-        return {
+        result = {
             "id": self.id,
             "username": self.username,
             "email": self.email,
             "phone": self.phone,
             "role": self.role,
+            "is_active": self.is_active,
             "managed_institution_id": self.managed_institution_id,
-            "managed_institution": managed_institution,
+            "managed_institution": institution,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+        if include_profile and self.role == "user":
+            result.update(
+                health_id=self.health_id,
+                real_name=self.real_name,
+                birth_date=self.birth_date.isoformat() if self.birth_date else None,
+                gender=self.gender,
+                allergy_history=self.allergy_history,
+                medical_history=self.medical_history,
+            )
+        return result
+
+    def friend_identity_dict(self) -> dict:
+        """Deliberately excludes every health-profile and contact field."""
+        return {"id": self.id, "username": self.username}

@@ -44,14 +44,18 @@ export function deleteOrgImage(imageId) {
   return http.delete(`/org/images/${imageId}`);
 }
 
-export function fetchOrgHealthRecords(params = {}) {
-  return http.get("/institution-health/records", { params });
-}
-
-export function fetchOrgHealthRecord(recordId) {
-  return http.get(`/institution-health/records/${recordId}`);
-}
-
-export function fetchOrgHealthTrends(params) {
-  return http.get("/institution-health/trends", { params });
+export const fetchOrgReports = (params = {}) => http.get("/org/reports", { params });
+export const createOrgReport = (payload) => http.post("/org/reports", payload);
+export const fetchOrgReport = (id) => http.get(`/org/reports/${id}`);
+export const updateOrgReport = (id, payload) => http.put(`/org/reports/${id}`, payload);
+export const addOrgReportIndicator = (id, payload) => http.post(`/org/reports/${id}/indicators`, payload);
+export const updateOrgReportIndicator = (id, indicatorId, payload) => http.put(`/org/reports/${id}/indicators/${indicatorId}`, payload);
+export const deleteOrgReportIndicator = (id, indicatorId) => http.delete(`/org/reports/${id}/indicators/${indicatorId}`);
+export const lockOrgReport = (id) => http.post(`/org/reports/${id}/lock`);
+export const submitOrgReport = (id) => http.post(`/org/reports/${id}/submit`);
+export const withdrawOrgReport = (id) => http.post(`/org/reports/${id}/withdraw`);
+export function uploadOrgReportOcr(file, fields) {
+  const form = new FormData(); form.append("file", file);
+  Object.entries(fields).forEach(([key, value]) => { if (value !== null && value !== "") form.append(key, value); });
+  return http.post("/org/reports/ocr", form, { headers: { "Content-Type": "multipart/form-data" } });
 }

@@ -11,7 +11,7 @@ class InstitutionInvite(db.Model):
     """The current institution-admin invitation for an institution.
 
     An institution owns at most one row. Reissuing a code updates that row and
-    clears its previous use/revocation metadata, so the database never has two
+    clears its previous use metadata, so the database never has two
     competing "current" codes for the same institution.
     """
 
@@ -26,7 +26,7 @@ class InstitutionInvite(db.Model):
             name="uq_institution_invites_code_hash",
         ),
         db.CheckConstraint(
-            "status in ('active', 'used', 'revoked')",
+            "status in ('active', 'used', 'superseded')",
             name="ck_institution_invites_status",
         ),
         db.CheckConstraint(
@@ -51,19 +51,13 @@ class InstitutionInvite(db.Model):
     )
     issued_by_admin_id = db.Column(
         db.Integer,
-        db.ForeignKey("users.id"),
-        nullable=False,
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     used_by_user_id = db.Column(
         db.Integer,
-        db.ForeignKey("users.id"),
-        nullable=True,
-        index=True,
-    )
-    revoked_by_admin_id = db.Column(
-        db.Integer,
-        db.ForeignKey("users.id"),
+        db.ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -73,7 +67,6 @@ class InstitutionInvite(db.Model):
         default=_utc_now,
     )
     used_at = db.Column(db.DateTime(timezone=True), nullable=True)
-    revoked_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     institution = db.relationship("Institution", back_populates="invite")
     issued_by_admin = db.relationship(
@@ -85,11 +78,6 @@ class InstitutionInvite(db.Model):
         "User",
         back_populates="used_institution_invites",
         foreign_keys=[used_by_user_id],
-    )
-    revoked_by_admin = db.relationship(
-        "User",
-        back_populates="revoked_institution_invites",
-        foreign_keys=[revoked_by_admin_id],
     )
 
     def to_dict(self) -> dict:
@@ -111,8 +99,6 @@ class InstitutionInvite(db.Model):
             "status": self.status,
             "issued_by_admin_id": self.issued_by_admin_id,
             "used_by_user_id": self.used_by_user_id,
-            "revoked_by_admin_id": self.revoked_by_admin_id,
             "issued_at": self.issued_at.isoformat() if self.issued_at else None,
             "used_at": self.used_at.isoformat() if self.used_at else None,
-            "revoked_at": self.revoked_at.isoformat() if self.revoked_at else None,
         }

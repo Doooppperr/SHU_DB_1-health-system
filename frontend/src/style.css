@@ -1243,6 +1243,12 @@ a {
   line-height: 1.7;
 }
 
+.welcome-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
 .admin-shield {
   display: grid;
   place-items: center;
@@ -2220,6 +2226,11 @@ a {
     align-items: flex-start;
     flex-direction: column;
     padding: 28px 24px;
+  }
+
+  .welcome-actions {
+    width: 100%;
+    flex-wrap: wrap;
   }
 
   .metric-grid {

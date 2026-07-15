@@ -72,10 +72,6 @@ const goDetail = (id) => {
   router.push({ name: "institution-detail", params: { id } });
 };
 
-const goRecords = () => {
-  router.push({ name: "records" });
-};
-
 const goTrends = () => {
   router.push({ name: "trends" });
 };

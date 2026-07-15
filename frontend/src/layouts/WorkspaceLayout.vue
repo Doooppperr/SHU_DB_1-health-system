@@ -100,27 +100,27 @@ let careMobileMediaQuery = null;
 const menus = {
   user: [
     { name: "dashboard", label: "健康总览", icon: "总" },
-    { name: "records", label: "健康档案", icon: "档" },
+    { name: "timeline", label: "健康时间线", icon: "线" },
+    { name: "measurements", label: "日常测量", icon: "测" },
+    { name: "registrations", label: "登记体检", icon: "登" },
     { name: "trends", label: "指标趋势", icon: "趋" },
     { name: "friends", label: "亲友授权", icon: "友" },
     { name: "institutions", label: "体检机构", icon: "院" },
     { name: "my-comments", label: "我的评论", icon: "评" },
-    { name: "profile", label: "个人中心", icon: "我" },
+    { name: "profile", label: "个人资料", icon: "我" },
   ],
   institution_admin: [
     { name: "org-dashboard", label: "运营总览", icon: "总" },
     { name: "org-profile", label: "机构资料", icon: "资" },
     { name: "org-gallery", label: "机构相册", icon: "图" },
     { name: "org-packages", label: "体检套餐", icon: "套" },
-    { name: "org-records", label: "健康档案", icon: "档" },
-    { name: "org-trends", label: "指标趋势", icon: "趋" },
+    { name: "org-reports", label: "体检报告", icon: "报" },
   ],
   admin: [
     { name: "admin-dashboard", label: "系统总览", icon: "总" },
     { name: "admin-institutions", label: "机构与套餐", icon: "院" },
     { name: "admin-invites", label: "邀请码", icon: "邀" },
     { name: "admin-users", label: "用户与角色", icon: "用" },
-    { name: "admin-records", label: "档案监管", icon: "档" },
     { name: "admin-comments", label: "评论审核", icon: "评" },
   ],
 };

@@ -3,7 +3,7 @@ from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from app.comments import comments_bp
 from app.extensions import db
-from app.models import Comment, HealthRecord, Institution, User
+from app.models import Comment, Institution, InstitutionReport, User
 from app.services.permissions import ROLE_USER, role_error
 
 
@@ -117,14 +117,15 @@ def create_comment():
     if rating is None or rating < 1 or rating > 5:
         return {"message": "rating must be between 1 and 5"}, 400
 
-    uploaded_record = HealthRecord.query.filter_by(
-        uploader_id=user.id,
+    uploaded_record = InstitutionReport.query.filter_by(
+        matched_user_id=user.id,
         institution_id=institution_id,
+        status="published",
     ).first()
     if uploaded_record is None:
         return {
             "code": "comment_requires_record",
-            "message": "upload a record for this institution before commenting",
+            "message": "a published institution report is required before commenting",
         }, 403
 
     comment = Comment(

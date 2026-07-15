@@ -8,7 +8,6 @@ environment, production openGauss data, or files outside ``backend/uploads``.
 from __future__ import annotations
 
 import argparse
-import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -26,17 +25,6 @@ class CleanupReport:
     orphan_count: int
     orphan_bytes: int
     removed_count: int
-
-
-def _walk_strings(value):
-    if isinstance(value, str):
-        yield value
-    elif isinstance(value, dict):
-        for item in value.values():
-            yield from _walk_strings(item)
-    elif isinstance(value, list):
-        for item in value:
-            yield from _walk_strings(item)
 
 
 def _normalize_upload_key(value: str) -> str | None:
@@ -59,21 +47,12 @@ def referenced_upload_keys(database_path: Path) -> set[str]:
     connection = sqlite3.connect(database_path)
     references: set[str] = set()
     try:
-        for report_url, raw_text in connection.execute(
-            "SELECT report_file_url, ocr_raw_text FROM health_records"
+        for (report_url,) in connection.execute(
+            "SELECT temporary_file_url FROM institution_reports "
+            "WHERE status = 'draft' AND temporary_file_url IS NOT NULL"
         ):
             if report_url:
                 key = _normalize_upload_key(report_url)
-                if key:
-                    references.add(key)
-            if not raw_text:
-                continue
-            try:
-                payload = json.loads(raw_text)
-            except (TypeError, json.JSONDecodeError):
-                continue
-            for value in _walk_strings(payload):
-                key = _normalize_upload_key(value)
                 if key:
                     references.add(key)
 

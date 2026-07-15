@@ -7,12 +7,12 @@
 
     <main id="main-content" class="auth-main" tabindex="-1">
       <div class="auth-panel auth-panel--wide">
-        <div class="auth-heading"><p>创建账号</p><h1>加入康康健健</h1><span>从一份档案开始，建立连续的健康视图。</span></div>
+        <div class="auth-heading"><p>创建账号</p><h1>加入康康健健</h1><span>从健康身份码开始，建立连续的健康视图。</span></div>
 
         <div class="register-mode" role="radiogroup" aria-label="注册身份">
           <label :class="{ active: mode === 'user' }">
             <input v-model="mode" type="radio" value="user" />
-            <span><strong>普通用户</strong><small>管理个人与亲友健康档案</small></span>
+            <span><strong>普通用户</strong><small>登记体检、记录自测并查看趋势</small></span>
           </label>
           <label :class="{ active: mode === 'staff' }">
             <input v-model="mode" type="radio" value="staff" />

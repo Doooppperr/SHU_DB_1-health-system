@@ -64,50 +64,8 @@ export function fetchAdminInvites() {
   return http.get("/admin/invites");
 }
 
-export function fetchInstitutionInvite(institutionId) {
-  return http.get(`/admin/institutions/${institutionId}/invite`);
-}
-
 export function issueInstitutionInvite(institutionId) {
   return http.post(`/admin/institutions/${institutionId}/invite`);
 }
 
-export function revokeInstitutionInvite(institutionId) {
-  return http.delete(`/admin/institutions/${institutionId}/invite`);
-}
-
-export function revokeInstitutionAdmin(userId) {
-  return http.post(`/admin/users/${userId}/revoke-institution-admin`);
-}
-
-export function fetchAdminRecords(params = {}) {
-  return http.get("/admin/records", { params });
-}
-
-export function createAdminRecord(payload) {
-  return http.post("/admin/records", payload);
-}
-
-export function fetchAdminRecord(recordId) {
-  return http.get(`/admin/records/${recordId}`);
-}
-
-export function updateAdminRecord(recordId, payload) {
-  return http.put(`/admin/records/${recordId}`, payload);
-}
-
-export function deleteAdminRecord(recordId) {
-  return http.delete(`/admin/records/${recordId}`);
-}
-
-export function addAdminRecordIndicator(recordId, payload) {
-  return http.post(`/admin/records/${recordId}/indicators`, payload);
-}
-
-export function updateAdminRecordIndicator(recordId, indicatorId, payload) {
-  return http.put(`/admin/records/${recordId}/indicators/${indicatorId}`, payload);
-}
-
-export function deleteAdminRecordIndicator(recordId, indicatorId) {
-  return http.delete(`/admin/records/${recordId}/indicators/${indicatorId}`);
-}
+export const deleteInstitutionAccount = (userId) => http.delete(`/admin/institution-accounts/${userId}`);

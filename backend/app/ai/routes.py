@@ -32,7 +32,7 @@ from app.ai.service import (
     parse_safety_completion,
 )
 from app.extensions import db
-from app.models import FriendRelation, HealthIndicator, HealthRecord, User
+from app.models import FriendRelation, HealthIndicator, HealthRecord, IndicatorDict, User
 
 
 _rate_buckets = defaultdict(deque)
@@ -50,7 +50,8 @@ def _current_user_optional():
         user_id = int(identity)
     except (TypeError, ValueError):
         return None
-    return db.session.get(User, user_id)
+    user = db.session.get(User, user_id)
+    return user if user is not None and user.is_active else None
 
 
 def _rate_limit_key(user):
@@ -196,10 +197,10 @@ def _load_selected_records(user, record_ids):
         ordered_batch = [by_id[item_id] for item_id in batch]
         if any(record.owner_id not in authorized_owner_ids for record in ordered_batch):
             return None, _json_error("record is unavailable", "record_unavailable", 404)
-        if any(record.status != "confirmed" for record in ordered_batch):
+        if any(record.status != "published" for record in ordered_batch):
             return None, _json_error(
-                "only confirmed records can be analyzed",
-                "record_not_confirmed",
+                "only published institution reports can be analyzed",
+                "report_not_published",
                 400,
             )
         if any(not record.indicators for record in ordered_batch):
@@ -258,6 +259,21 @@ def _format_record_context(user, records):
                 f"参考范围 {reference}；系统标记{'异常' if item.is_abnormal else '正常'}。"
             )
         sections.append("\n".join(lines))
+    from app.health.routes import effective_points
+
+    owner_id = records[0].owner_id
+    daily_sections = []
+    for definition in IndicatorDict.query.filter_by(allow_self_measurement=True).all():
+        points = effective_points(owner_id, definition.id)
+        if points:
+            recent = points[-30:]
+            daily_sections.append(
+                f"{definition.name}（{definition.unit or '无单位'}）：" + ", ".join(
+                    f"{point['date']}={point['value']}[{point['source']}]" for point in recent
+                )
+            )
+    if daily_sections:
+        sections.append("服务端已按同日机构数据优先规则计算的每日有效数据：\n" + "\n".join(daily_sections))
     return "\n\n".join(sections)
 
 
@@ -624,7 +640,7 @@ def analyzable_records():
         )
         .filter(
             HealthRecord.owner_id.in_(owner_ids),
-            HealthRecord.status == "confirmed",
+            HealthRecord.status == "published",
             HealthRecord.indicators.any(),
         )
         .order_by(HealthRecord.exam_date.desc(), HealthRecord.id.desc())
@@ -873,6 +889,18 @@ def analyze_stream():
         return load_error
 
     facts = build_analysis_facts(user, records)
+    from app.health.routes import effective_points
+    owner_id = records[0].owner_id
+    facts["daily_effective_indicators"] = [
+        {
+            "code": definition.code,
+            "name": definition.name,
+            "unit": definition.unit,
+            "points": effective_points(owner_id, definition.id)[-90:],
+        }
+        for definition in IndicatorDict.query.filter_by(allow_self_measurement=True).all()
+        if effective_points(owner_id, definition.id)
+    ]
     request_id = uuid.uuid4().hex
     configured_model = current_app.config.get("DEEPSEEK_MODEL")
     support_phone = (current_app.config.get("AI_SUPPORT_PHONE") or "").strip()

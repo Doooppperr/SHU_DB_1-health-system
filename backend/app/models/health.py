@@ -1,0 +1,211 @@
+from datetime import datetime, timezone
+
+from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy.orm import synonym
+
+from app.extensions import db
+
+
+def utc_now():
+    return datetime.now(timezone.utc)
+
+
+class SelfMeasurement(db.Model):
+    __tablename__ = "self_measurements"
+    __table_args__ = (
+        db.CheckConstraint("value >= 0", name="ck_self_measurements_value_non_negative"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    indicator_dict_id = db.Column(db.Integer, db.ForeignKey("indicator_dicts.id"), nullable=False, index=True)
+    value = db.Column(db.Numeric(14, 4), nullable=False)
+    measured_at = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    user = db.relationship("User")
+    indicator_dict = db.relationship("IndicatorDict")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "indicator_dict_id": self.indicator_dict_id,
+            "value": float(self.value),
+            "unit": self.indicator_dict.unit if self.indicator_dict else None,
+            "indicator": self.indicator_dict.to_dict() if self.indicator_dict else None,
+            "measured_at": self.measured_at.isoformat() if self.measured_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "source": "self_measurement",
+        }
+
+
+class ExamRegistration(db.Model):
+    __tablename__ = "exam_registrations"
+    __table_args__ = (
+        db.CheckConstraint(
+            "status in ('awaiting_report', 'matched', 'cancelled')",
+            name="ck_exam_registrations_status",
+        ),
+        db.Index(
+            "uq_exam_registrations_active_user_date",
+            "user_id",
+            "exam_date",
+            unique=True,
+            sqlite_where=db.text("status <> 'cancelled'"),
+            postgresql_where=db.text("status <> 'cancelled'"),
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    institution_id = db.Column(db.Integer, db.ForeignKey("institutions.id"), nullable=False, index=True)
+    package_id = db.Column(db.Integer, db.ForeignKey("packages.id", ondelete="SET NULL"), nullable=True)
+    exam_date = db.Column(db.Date, nullable=False, index=True)
+    status = db.Column(db.String(24), nullable=False, default="awaiting_report")
+    matched_report_id = db.Column(db.Integer, db.ForeignKey("institution_reports.id", use_alter=True, ondelete="SET NULL"), nullable=True, unique=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    cancelled_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    user = db.relationship("User", foreign_keys=[user_id])
+    institution = db.relationship("Institution")
+    package = db.relationship("Package")
+    matched_report = db.relationship("InstitutionReport", foreign_keys=[matched_report_id], post_update=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "institution_id": self.institution_id,
+            "package_id": self.package_id,
+            "exam_date": self.exam_date.isoformat(),
+            "status": self.status,
+            "display_status": "机构未提交" if self.status == "awaiting_report" else ("机构已提交" if self.status == "matched" else "已取消"),
+            "matched_report_id": self.matched_report_id,
+            "institution": self.institution.to_dict() if self.institution else None,
+            "package": self.package.to_dict() if self.package else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "cancelled_at": self.cancelled_at.isoformat() if self.cancelled_at else None,
+        }
+
+
+class InstitutionReport(db.Model):
+    __tablename__ = "institution_reports"
+    __table_args__ = (
+        db.CheckConstraint(
+            "status in ('draft', 'locked', 'waiting_match', 'published', 'withdrawn', 'expired')",
+            name="ck_institution_reports_status",
+        ),
+        db.CheckConstraint("length(trim(subject_name_snapshot)) > 0", name="ck_institution_reports_subject_name"),
+        db.CheckConstraint("length(trim(subject_health_id)) > 0", name="ck_institution_reports_subject_health_id"),
+        db.Index(
+            "uq_institution_reports_active_subject_date",
+            "institution_id", "subject_health_id", "exam_date",
+            unique=True,
+            sqlite_where=db.text("status not in ('withdrawn', 'expired')"),
+            postgresql_where=db.text("status not in ('withdrawn', 'expired')"),
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    institution_id = db.Column(db.Integer, db.ForeignKey("institutions.id"), nullable=False, index=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_by_username_snapshot = db.Column(db.String(80), nullable=False)
+    subject_name_snapshot = db.Column(db.String(80), nullable=False)
+    subject_health_id = db.Column(db.String(20), nullable=False, index=True)
+    exam_date = db.Column(db.Date, nullable=False, index=True)
+    package_id = db.Column(db.Integer, db.ForeignKey("packages.id", ondelete="SET NULL"), nullable=True)
+    matched_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    exam_registration_id = db.Column(db.Integer, db.ForeignKey("exam_registrations.id", ondelete="SET NULL"), nullable=True, unique=True)
+    status = db.Column(db.String(24), nullable=False, default="draft", index=True)
+    ocr_diagnostics = db.Column(db.JSON, nullable=True)
+    temporary_file_url = db.Column(db.String(255), nullable=True)
+    locked_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    submitted_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
+    published_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    withdrawn_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+
+    institution = db.relationship("Institution")
+    creator = db.relationship("User", foreign_keys=[created_by_user_id])
+    owner = db.relationship("User", foreign_keys=[matched_user_id])
+    package = db.relationship("Package")
+    registration = db.relationship("ExamRegistration", foreign_keys=[exam_registration_id])
+    indicators = db.relationship("ReportIndicator", back_populates="report", cascade="all, delete-orphan", order_by="ReportIndicator.id.asc()")
+
+    # Transitional internal aliases keep the mature AI fact builder usable while
+    # the public v1 record API and old database tables are removed.
+    owner_id = synonym("matched_user_id")
+
+    @hybrid_property
+    def display_id(self):
+        return f"report{self.id}" if self.id is not None else None
+
+    @hybrid_property
+    def report_file_url(self):
+        return None
+
+    def to_dict(self, include_indicators=False, *, user_view=False):
+        result = {
+            "id": self.id,
+            "display_id": self.display_id,
+            "institution_id": self.institution_id,
+            "package_id": self.package_id,
+            "exam_date": self.exam_date.isoformat(),
+            "status": self.status,
+            "subject_name_snapshot": self.subject_name_snapshot,
+            "created_by_username_snapshot": self.created_by_username_snapshot,
+            "locked_at": self.locked_at.isoformat() if self.locked_at else None,
+            "submitted_at": self.submitted_at.isoformat() if self.submitted_at else None,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "published_at": self.published_at.isoformat() if self.published_at else None,
+            "withdrawn_at": self.withdrawn_at.isoformat() if self.withdrawn_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "institution": {"id": self.institution.id, "name": self.institution.name, "branch_name": self.institution.branch_name} if self.institution else None,
+            "package": {"id": self.package.id, "name": self.package.name} if self.package else None,
+            "indicator_count": len(self.indicators),
+        }
+        if not user_view:
+            result["subject_health_id"] = self.subject_health_id
+            result["ocr_diagnostics"] = self.ocr_diagnostics
+        else:
+            result.pop("created_by_username_snapshot", None)
+        if include_indicators:
+            result["indicators"] = [item.to_dict() for item in self.indicators]
+        return result
+
+
+class ReportIndicator(db.Model):
+    __tablename__ = "report_indicators"
+    __table_args__ = (
+        db.UniqueConstraint("report_id", "indicator_dict_id", name="uq_report_indicator"),
+        db.CheckConstraint("length(trim(value)) > 0", name="ck_report_indicators_value_not_blank"),
+        db.CheckConstraint("input_source in ('manual', 'ocr')", name="ck_report_indicators_input_source"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    report_id = db.Column(db.Integer, db.ForeignKey("institution_reports.id", ondelete="CASCADE"), nullable=False, index=True)
+    indicator_dict_id = db.Column(db.Integer, db.ForeignKey("indicator_dicts.id"), nullable=False, index=True)
+    value = db.Column(db.String(120), nullable=False)
+    is_abnormal = db.Column(db.Boolean, nullable=False, default=False)
+    input_source = db.Column(db.String(20), nullable=False, default="manual")
+
+    report = db.relationship("InstitutionReport", back_populates="indicators")
+    indicator_dict = db.relationship("IndicatorDict", back_populates="report_indicators")
+    record_id = synonym("report_id")
+    source = synonym("input_source")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "report_id": self.report_id,
+            "indicator_dict_id": self.indicator_dict_id,
+            "value": self.value,
+            "is_abnormal": self.is_abnormal,
+            "input_source": self.input_source,
+            "source": self.input_source,
+            "indicator": self.indicator_dict.to_dict() if self.indicator_dict else None,
+        }

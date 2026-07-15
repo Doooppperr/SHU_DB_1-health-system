@@ -1,7 +1,7 @@
 <template>
   <div class="workspace-page">
     <section class="page-intro">
-      <div><p>全局机构治理</p><h2>机构与套餐管理</h2><span>停用操作保留历史档案、套餐、评论与图片，不执行物理删除。</span></div>
+      <div><p>全局机构治理</p><h2>机构与套餐管理</h2><span>停用操作保留历史报告、套餐、评论与图片，不执行物理删除。</span></div>
       <el-button type="primary" @click="openCreate">新增机构</el-button>
     </section>
     <el-alert v-if="errorMessage" :title="errorMessage" type="error" show-icon :closable="false" />
@@ -12,7 +12,7 @@
         <el-table-column prop="district" label="区域" width="120" />
         <el-table-column prop="address" label="地址" min-width="220" show-overflow-tooltip />
         <el-table-column label="套餐" width="90"><template #default="scope">{{ scope.row.package_count ?? 0 }}/{{ scope.row.total_package_count ?? scope.row.package_count ?? 0 }}</template></el-table-column>
-        <el-table-column label="管理员" min-width="140"><template #default="scope">{{ scope.row.administrator?.username || scope.row.manager?.username || "未任命" }}</template></el-table-column>
+        <el-table-column label="机构账号" min-width="140"><template #default="scope">{{ scope.row.administrator_count || 0 }} 个</template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="scope"><el-tag :type="scope.row.is_active ? 'success' : 'info'">{{ scope.row.is_active ? "启用" : "已停用" }}</el-tag></template></el-table-column>
         <el-table-column label="操作" width="330" fixed="right"><template #default="scope"><el-button link type="primary" @click="openEdit(scope.row)">编辑</el-button><el-button link @click="openPackages(scope.row)">套餐</el-button><el-button link @click="openGallery(scope.row)">相册</el-button><el-button v-if="scope.row.is_active" link type="danger" @click="deactivate(scope.row)">停用</el-button><el-button v-else link type="success" @click="restore(scope.row)">恢复</el-button></template></el-table-column>
       </el-table>
@@ -34,7 +34,7 @@
     </el-dialog>
 
     <el-drawer v-model="packageDrawerVisible" :title="`${selectedInstitution?.name || ''} · 套餐管理`" size="min(760px, 94vw)">
-      <div class="drawer-toolbar"><p>停用套餐不会影响历史档案。</p><el-button type="primary" @click="openPackageCreate">新增套餐</el-button></div>
+      <div class="drawer-toolbar"><p>停用套餐不会影响历史报告。</p><el-button type="primary" @click="openPackageCreate">新增套餐</el-button></div>
       <el-table :data="packages" v-loading="packagesLoading" empty-text="暂无套餐">
         <el-table-column prop="name" label="套餐" min-width="160" /><el-table-column prop="focus_area" label="重点方向" min-width="140" /><el-table-column label="价格" width="100"><template #default="scope">¥{{ Number(scope.row.price || 0).toFixed(2) }}</template></el-table-column><el-table-column label="状态" width="90"><template #default="scope"><el-tag :type="scope.row.is_active ? 'success' : 'info'">{{ scope.row.is_active ? "启用" : "停用" }}</el-tag></template></el-table-column><el-table-column label="操作" width="150"><template #default="scope"><el-button link type="primary" @click="openPackageEdit(scope.row)">编辑</el-button><el-button v-if="scope.row.is_active" link type="danger" @click="deactivatePackage(scope.row)">停用</el-button><el-button v-else link type="success" @click="restorePackage(scope.row)">恢复</el-button></template></el-table-column>
       </el-table>
@@ -80,8 +80,8 @@ function openCreate(){resetInstitution();dialogVisible.value=true;}
 function openEdit(item){Object.keys(institutionForm).forEach((key)=>institutionForm[key]=item[key]??(key==="id"?null:""));dialogVisible.value=true;}
 async function load(){loading.value=true;try{const{data}=await fetchAdminInstitutions();items.value=data.items||[];}catch(error){errorMessage.value=error?.response?.data?.message||"机构列表加载失败";}finally{loading.value=false;}}
 async function saveInstitution(){if(!institutionForm.name.trim()||!institutionForm.branch_name.trim()||!institutionForm.district.trim()||!institutionForm.address.trim()){ElMessage.error("请填写机构名称、分院、区域和地址");return;}saving.value=true;const payload=Object.fromEntries(Object.entries(institutionForm).filter(([key])=>key!=="id").map(([key,value])=>[key,typeof value==="string"?(value.trim()||null):value]));try{if(institutionForm.id)await updateAdminInstitution(institutionForm.id,payload);else await createAdminInstitution(payload);ElMessage.success(institutionForm.id?"机构已更新":"机构已创建");dialogVisible.value=false;await load();}catch(error){ElMessage.error(error?.response?.data?.message||"机构保存失败");}finally{saving.value=false;}}
-async function deactivate(item){try{await ElMessageBox.confirm("停用机构会同时撤销当前机构管理员和未使用邀请码，但保留全部历史业务数据。","停用机构",{type:"warning",confirmButtonText:"确认停用",cancelButtonText:"取消"});await deactivateAdminInstitution(item.id);ElMessage.success("机构已停用");await load();}catch(error){if(error!=="cancel"&&error!=="close")ElMessage.error(error?.response?.data?.message||"停用失败");}}
-async function restore(item){try{await restoreAdminInstitution(item.id);ElMessage.success("机构已恢复；如需机构管理员，请重新签发邀请码");await load();}catch(error){ElMessage.error(error?.response?.data?.message||"恢复失败");}}
+async function deactivate(item){try{await ElMessageBox.confirm("停用机构会禁止其机构账号登录，并使未使用邀请码失效；历史业务数据保留。","停用机构",{type:"warning",confirmButtonText:"确认停用",cancelButtonText:"取消"});await deactivateAdminInstitution(item.id);ElMessage.success("机构已停用");await load();}catch(error){if(error!=="cancel"&&error!=="close")ElMessage.error(error?.response?.data?.message||"停用失败");}}
+async function restore(item){try{await restoreAdminInstitution(item.id);ElMessage.success("机构已恢复，原有机构账号可继续登录");await load();}catch(error){ElMessage.error(error?.response?.data?.message||"恢复失败");}}
 async function openPackages(item){selectedInstitution.value=item;packageDrawerVisible.value=true;await loadPackages();}
 async function loadPackages(){if(!selectedInstitution.value)return;packagesLoading.value=true;try{const{data}=await fetchAdminPackages(selectedInstitution.value.id);packages.value=data.items||[];}catch(error){ElMessage.error(error?.response?.data?.message||"套餐加载失败");}finally{packagesLoading.value=false;}}
 function resetPackage(){Object.assign(packageForm,{id:null,name:"",focus_area:"",gender_scope:"all",price:0,description:""});}

@@ -1,7 +1,8 @@
 param(
     [string]$Server = "111.229.87.94",
     [string]$SshUser = "ubuntu",
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [switch]$SyncDemoDatabase
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +12,9 @@ $archiveName = "healthdoc-app-$releaseId.tar.gz"
 $archivePath = Join-Path ([System.IO.Path]::GetTempPath()) $archiveName
 $remoteArchive = "/home/$SshUser/$archiveName"
 $remoteScript = "/home/$SshUser/healthdoc-release-server.sh"
+$demoSnapshotName = "healthdoc-demo-$releaseId.db"
+$demoSnapshotPath = Join-Path ([System.IO.Path]::GetTempPath()) $demoSnapshotName
+$remoteDemoSnapshot = "/home/$SshUser/$demoSnapshotName"
 
 function Assert-LastExitCode([string]$Step) {
     if ($LASTEXITCODE -ne 0) {
@@ -71,11 +75,42 @@ try {
     scp (Join-Path $projectRoot "deploy\release-server.sh") "${SshUser}@${Server}:$remoteScript"
     Assert-LastExitCode "Release helper upload"
 
-    ssh -t "${SshUser}@${Server}" "chmod 700 '$remoteScript' && sudo bash '$remoteScript' '$remoteArchive' '$releaseId'"
+    $remoteDatabaseArgument = ""
+    if ($SyncDemoDatabase) {
+        $sourceDatabase = Join-Path $projectRoot "backend\instance\health_system.db"
+        if (-not (Test-Path -LiteralPath $sourceDatabase -PathType Leaf)) {
+            throw "Synthetic demo database not found: $sourceDatabase"
+        }
+        Remove-Item -LiteralPath $demoSnapshotPath -Force -ErrorAction SilentlyContinue
+        $snapshotCode = @"
+import sqlite3
+import sys
+
+source = sqlite3.connect(sys.argv[1])
+target = sqlite3.connect(sys.argv[2])
+try:
+    source.backup(target)
+    if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+        raise RuntimeError("snapshot integrity check failed")
+    if target.execute("PRAGMA foreign_key_check").fetchall():
+        raise RuntimeError("snapshot foreign-key check failed")
+finally:
+    target.close()
+    source.close()
+"@
+        & (Join-Path $projectRoot "backend\.venv\Scripts\python.exe") -c $snapshotCode $sourceDatabase $demoSnapshotPath
+        Assert-LastExitCode "Demo database snapshot"
+        scp $demoSnapshotPath "${SshUser}@${Server}:$remoteDemoSnapshot"
+        Assert-LastExitCode "Demo database upload"
+        $remoteDatabaseArgument = " '$remoteDemoSnapshot'"
+    }
+
+    ssh -t "${SshUser}@${Server}" "chmod 700 '$remoteScript' && sudo bash '$remoteScript' '$remoteArchive' '$releaseId'$remoteDatabaseArgument"
     Assert-LastExitCode "Remote release"
 
     Write-Host "Deployment completed: http://$Server"
 }
 finally {
     Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $demoSnapshotPath -Force -ErrorAction SilentlyContinue
 }
