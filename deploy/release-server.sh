@@ -30,6 +30,26 @@ fi
 
 release="/opt/healthdoc/releases/$release_id"
 previous=$(readlink -f /opt/healthdoc/current 2>/dev/null || true)
+env_file=/etc/healthdoc/healthdoc.env
+rag_root=/var/lib/healthdoc/rag
+env_backup=$(mktemp /tmp/healthdoc-env.XXXXXX)
+trap 'rm -f "$env_backup"' EXIT
+
+if [[ ! -f "$env_file" ]]; then
+    echo "Production environment file is missing: $env_file" >&2
+    exit 2
+fi
+cp -p "$env_file" "$env_backup"
+
+upsert_env() {
+    local key=$1
+    local value=$2
+    if grep -q "^${key}=" "$env_file"; then
+        sed -i "s|^${key}=.*$|${key}=${value}|" "$env_file"
+    else
+        printf '%s=%s\n' "$key" "$value" >>"$env_file"
+    fi
+}
 
 if [[ -e "$release" ]]; then
     echo "Release already exists: $release" >&2
@@ -116,6 +136,45 @@ if [[ -n "$demo_database" ]]; then
     rm -f "$demo_database"
 fi
 
+install -d -o healthdoc -g www-data -m 750 \
+    "$rag_root" "$rag_root/qdrant" "$rag_root/models" \
+    "$rag_root/cache" "$rag_root/huggingface"
+
+if grep -Eiq '^RAG_ENABLED=(1|true|yes|on)$' "$env_file"; then
+    systemctl stop healthdoc.service
+fi
+
+upsert_env RAG_ENABLED 1
+upsert_env RAG_RUNTIME_PATH "$rag_root"
+upsert_env RAG_STORAGE_PATH "$rag_root/qdrant"
+upsert_env RAG_MODEL_CACHE_PATH "$rag_root/models"
+
+set +e
+runuser -u healthdoc -- env \
+    HOME=/var/lib/healthdoc \
+    XDG_CACHE_HOME="$rag_root/cache" \
+    HF_HOME="$rag_root/huggingface" \
+    RAG_RUNTIME_PATH="$rag_root" \
+    RAG_STORAGE_PATH="$rag_root/qdrant" \
+    RAG_MODEL_CACHE_PATH="$rag_root/models" \
+    /opt/healthdoc/venv/bin/python "$release/backend/scripts/rag_sync.py" sync
+rag_sync_status=$?
+set -e
+if [[ "$rag_sync_status" != 0 ]]; then
+    cp -p "$env_backup" "$env_file"
+    rm -rf "$release"
+    rm -f "$env_backup"
+    if [[ -n "$database_backup" && -f "$database_backup" ]]; then
+        restore_database_backup
+    fi
+    systemctl start healthdoc.service
+    if [[ -n "$demo_database" ]]; then
+        rm -f "$demo_database"
+    fi
+    echo "RAG sync failed; the current release, environment and database were restored." >&2
+    exit "$rag_sync_status"
+fi
+
 ln -sfn "$release" /opt/healthdoc/current.new
 mv -Tf /opt/healthdoc/current.new /opt/healthdoc/current
 
@@ -126,6 +185,9 @@ chown -R root:www-data /var/www/html
 find /var/www/html -type d -exec chmod 755 {} +
 find /var/www/html -type f -exec chmod 644 {} +
 
+install -o root -g root -m 644 \
+    "$release/deploy/healthdoc.service" /etc/systemd/system/healthdoc.service
+systemctl daemon-reload
 systemctl restart healthdoc.service
 healthy=0
 for _ in $(seq 1 30); do
@@ -142,6 +204,7 @@ if [[ "$healthy" != 1 ]]; then
     if [[ -n "$database_backup" && -f "$database_backup" ]]; then
         restore_database_backup
     fi
+    cp -p "$env_backup" "$env_file"
     if [[ -n "$previous" && -d "$previous" ]]; then
         ln -sfn "$previous" /opt/healthdoc/current.rollback
         mv -Tf /opt/healthdoc/current.rollback /opt/healthdoc/current
@@ -158,4 +221,5 @@ rm -f "$archive"
 if [[ -n "$demo_database" ]]; then
     rm -f "$demo_database"
 fi
+rm -f "$env_backup"
 echo "Released $release_id successfully."

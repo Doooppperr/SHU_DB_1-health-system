@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 
 from app.extensions import db
+from app.ai.rag import RetrievalResult
 from app.models import ExamRegistration, IndicatorDict, Institution, InstitutionReport, SelfMeasurement, User
 from app.services.record_files import report_file_path
 from app.services.reports import cleanup_expired_reports
@@ -175,3 +176,72 @@ def test_admin_cascade_deletes_regular_user_business_data(app, client):
         assert db.session.get(User, user_id) is None
         assert SelfMeasurement.query.filter_by(user_id=user_id).count() == 0
         assert ExamRegistration.query.filter_by(user_id=user_id).count() == 0
+
+
+def test_ai_emergency_skips_public_knowledge_retrieval(app, client):
+    class ForbiddenRetriever:
+        @staticmethod
+        def retrieve(*_args, **_kwargs):
+            raise AssertionError("emergency path must not invoke RAG")
+
+    app.extensions["knowledge_retriever"] = ForbiddenRetriever()
+    response = client.post(
+        "/api/ai/chat/stream",
+        headers=login(client, "test1"),
+        json={"message": "我胸痛并且呼吸困难", "history": []},
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert '"decision":"emergency"' in body
+    assert '"stage":"retrieving"' not in body
+
+
+def test_ai_owner_scope_uses_published_reports_and_degrades_without_rag(app, client):
+    class UnavailableRetriever:
+        @staticmethod
+        def retrieve(*_args, **_kwargs):
+            return RetrievalResult(status="unavailable", error_code="test_unavailable")
+
+    app.extensions["knowledge_retriever"] = UnavailableRetriever()
+    with app.app_context():
+        user = User.query.filter_by(username="test1").first()
+        owner_id = user.id
+        expected_ids = [
+            item.id
+            for item in InstitutionReport.query.filter_by(
+                matched_user_id=user.id, status="published"
+            ).order_by(InstitutionReport.exam_date, InstitutionReport.id)
+        ]
+    response = client.post(
+        "/api/ai/chat",
+        headers=login(client, "test1"),
+        json={
+            "message": "请解释这些历史报告的整体变化",
+            "record_scope": {"owner_id": owner_id, "mode": "all_confirmed"},
+            "consent": True,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["selected_record_ids"] == expected_ids
+    assert payload["rag_used"] is False
+    assert payload["retrieval_status"] == "unavailable"
+
+
+def test_admin_ai_retrieves_only_public_audience(app, client):
+    audiences = []
+
+    class CapturingRetriever:
+        @staticmethod
+        def retrieve(_query, *, audience, **_kwargs):
+            audiences.append(audience)
+            return RetrievalResult(status="no_match")
+
+    app.extensions["knowledge_retriever"] = CapturingRetriever()
+    response = client.post(
+        "/api/ai/chat",
+        headers=login(client, "demo_admin"),
+        json={"message": "请说明平台公共知识检索边界", "history": []},
+    )
+    assert response.status_code == 200
+    assert audiences == ["public"]

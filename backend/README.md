@@ -135,6 +135,10 @@ flask --app wsgi:app cleanup-expired-reports
 
 真实模式配置见 `.env.example`。默认连接、读取、总截止为 5/30/60 秒；访客和登录用户默认每分钟 10/30 次进程内限流。
 
+RAG 仅索引 `rag_sources/manifest.json` 批准的公共知识，不索引用户问题、聊天、OCR 原文、用户 ID 或健康指标值。首次显式执行 `.\.venv\Scripts\python.exe scripts\rag_sync.py sync`，成功后再设置 `RAG_ENABLED=1`；应用启动和请求期间不联网更新语料。来源哈希变化会进入 quarantine，审核批准后才能切换索引。SSE 增加 `status.stage=retrieving`，只返回 `rag_used`、`retrieval_status` 和 `knowledge_source_count`，不向前端暴露来源正文或 URL。
+
+可分析对象为本人或已授权亲友的 `published` 机构报告。精确 `selected_record_ids` 与 `record_scope: {"owner_id": 2, "mode": "all_confirmed"}` 互斥，后者在 schema v3 中解析为该归属人的全部已发布报告；两种方式都必须逐请求同意并重新鉴权。
+
 ## OCR
 
 - 当前入口：`POST /api/org/reports/ocr`，仅机构账号。
@@ -179,9 +183,7 @@ Waitress 本机演示推荐从项目根目录运行：
 .\.venv\Scripts\python.exe -m pip check
 ```
 
-当前 v3 聚焦回归为 13 项，覆盖：schema 形状和迁移管理员哈希、丰富演示时间线与角色矩阵、全量快照迁移双向引用恢复、多机构账号、健康身份、两个方向精确匹配、锁定不可变、跨机构隔离、登记唯一性、过期清理、趋势优先/回退、亲友隐私、角色隔离、AI 同意/隐私、OCR Mock 与文件删除、普通用户级联删除及机构账号快照保留。
-
-完整验收结论见 [`../项目文档/测试报告.md`](../项目文档/测试报告.md)。
+当前 25 项测试使用独立内存 SQLite，不修改 `instance/health_system.db`；覆盖 schema v3、丰富演示时间线、双向匹配、趋势/隐私、AI 同意、RAG 切分/同步/重排/安全降级、OCR Mock 与文件删除，以及全量快照迁移双向引用恢复。完整结论见 [`../项目文档/测试报告.md`](../项目文档/测试报告.md)。
 
 ## 生产数据库同步
 

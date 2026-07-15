@@ -1,6 +1,6 @@
 # 康康健健 HealthDoc 项目文档索引
 
-> 最后核对：2026-07-16。当前实现为 SQLite schema v3。自动化基线为后端 13 项、前端 15 个文件 81 项，Vite production build 与全量快照迁移冒烟通过。
+> 最后核对：2026-07-16。当前实现为 SQLite schema v3 与本地双通道 RAG；自动化基线为后端 25 项、前端 15 个文件 82 项，生产构建、依赖审计、RAG 黄金查询和全量快照迁移冒烟通过。
 
 本目录描述项目当前实现的完整有效范围。文档必须从整个项目核对现存功能，不能只记录最近一次重构新增的部分。
 
@@ -58,7 +58,7 @@
 | 机构报告和匹配 | `backend/app/org/`、`exam_reports/`、`services/reports.py` | 需求、数据库、AI/OCR、演示、状态机测试 |
 | 机构、套餐、邀请码和相册 | admin/org/institutions 路由与服务 | 需求、演示、数据库、角色测试 |
 | 亲友或评论 | friends/comments 路由与视图 | 需求、隐私规则、测试报告 |
-| AI 流式对话或分析 | `backend/app/ai/`、AI Store 与助手组件 | AI/OCR 说明、Mock、SSE 与前端交互测试 |
+| AI 流式对话、分析或 RAG | `backend/app/ai/`、`backend/rag_sources/`、AI Store 与助手组件 | AI/OCR 说明、来源清单、Mock、SSE、检索与前端交互测试 |
 | OCR 解析或映射 | OCR 服务、org 报告路由与机构报告页 | AI/OCR 说明、解析/文件删除测试、演示指南 |
 | 主题、关怀和响应式布局 | appearance Store、全局样式与工作台布局 | 前端 README、组件测试、测试报告 |
 | schema 或文件存储 | models、迁移脚本、storage/record_files 服务 | 数据库两文档、备份恢复、迁移测试 |

@@ -11,7 +11,7 @@
 - 亲友授权：支持关系建立、授权、撤权与删除；获得授权后只读查看对方的时间线、报告和趋势，但不会获得真实姓名、生日、性别、联系方式、健康身份码、过敏史或既往史。
 - 机构服务：提供机构列表、详情、套餐、相册封面、停用/恢复和审核后公开评论。
 - OCR：机构在草稿阶段上传报告，解析结果必须人工复核；锁定报告时删除临时原文件，用户、亲友和管理员都没有原报告文件入口。
-- 健康 AI：继续使用 SSE 流式响应、公开 FAQ、急症分流、取消/重试、按需引用和逐请求同意；健康上下文改为已发布机构报告与服务端计算的每日有效指标。
+- 健康 AI：使用 SSE 流式响应、公开 FAQ、急症分流、取消/重试、按需引用和逐请求同意；私人健康上下文来自已发布机构报告与每日有效指标，公共科普知识通过 FastEmbed 与 Qdrant Local 检索，私人数据不进入向量库。
 - 关怀与响应式界面：保留统一页面倍率、AI 侧栏自适应、移动端遮罩和机构封面失败占位。
 
 ## 技术栈
@@ -23,7 +23,7 @@
 | 数据库 | 本地 SQLite schema v3；代码保留 GaussDB/openGauss 连接配置 |
 | 图片处理 | Pillow，服务端解码、重编码并清除 EXIF |
 | OCR | 本地 Mock；可选华为云通用表格 OCR |
-| AI | DeepSeek、SSE 流式输出、本地 FAQ/安全分流与测试 Mock |
+| AI/RAG | DeepSeek V4 Flash、SSE、FastEmbed `BAAI/bge-small-zh-v1.5`、Qdrant Local、本地 FAQ/安全分流与测试 Mock |
 | 本机演示 | Waitress、Vite Preview |
 | 测试 | Pytest、Vitest、Vue Test Utils、jsdom |
 
@@ -41,13 +41,14 @@ health system/
 │  ├─ instance/health_system.db        # 合成演示 SQLite 快照（Git 跟踪）
 │  ├─ uploads/                         # 机构图片与草稿临时文件（Git 忽略）
 │  ├─ scripts/                         # 数据库升级与清理脚本
+│  ├─ rag_sources/                     # 批准的公共 RAG 来源与黄金查询
 │  └─ tests/
 ├─ frontend/src/
 │  ├─ api/、stores/、components/
 │  ├─ views/admin/、views/org/
 │  └─ views/                           # 公开页面与普通用户页面
 ├─ scripts/                            # Windows 本地启动/发布脚本
-├─ deploy/                             # 历史服务器配置；发布前须完成 v3 生产迁移
+├─ deploy/                             # Apache、systemd 与可回滚服务器发布
 ├─ local-assets/                       # 本地资料与历史备份（Git 忽略）
 └─ 项目文档/
 ```
@@ -163,6 +164,10 @@ Set-Location .\backend
 - 机构和套餐采用软停用；每家机构最多 8 张 JPEG、PNG 或 WebP 图片，单张不超过 5 MB，排序第一张为封面。
 - 用户只有在拥有该机构已发布匹配报告后才能评论；系统管理员负责公开状态审核。
 - `/uploads` 只公开数据库登记的机构图片。草稿报告文件、孤儿文件和 `reports/` 路径不公开。
+- Qdrant 只保存批准的公共语料片段及来源元数据，不保存用户 ID、档案 ID、指标值、问题正文或聊天内容。
+- AI 对话和分析结果不写入 SQLite；浏览器只在当前标签页 `sessionStorage` 中保存最多 40 条界面消息，发送给模型的历史最多 20 条并在本地确定性裁剪。
+- AI 面板在桌面端打开时按比例缩放主页面，最低缩放比例为 0.7；空间不足或移动端切换为遮罩对话框，不再挤压导航文字。
+- 关怀模式与 AI 面板共用同一画布尺寸计算：两者同时开启时会合并倍率并保持主页面恰好落在侧栏之外；公开门户导航项保持单行，窄屏自动回退而不产生横向滚动。
 
 ## AI 与 OCR
 
@@ -171,6 +176,7 @@ Set-Location .\backend
 ```env
 OCR_USE_MOCK=1
 AI_USE_MOCK=1
+RAG_ENABLED=0
 ```
 
 真实 OCR 需配置华为云 Endpoint、AK、SK 和 Project ID；真实 AI 需配置 `DEEPSEEK_API_KEY`。系统只提供指标科普、一般生活建议、产品导览和安全分流，不做诊断、处方或急症替代处理。
@@ -182,6 +188,8 @@ OCR 使用 `region-v2` 的多表区域解析、表格与文本并行、精确别
 完整协议见[AI 与 OCR 开发说明](项目文档/AI与OCR开发说明.md)。
 
 ## 清理、验证与备份
+
+首次本地启用 RAG 时，在 `backend` 目录执行 `python scripts/rag_sync.py sync`，成功后再设置 `RAG_ENABLED=1`。应用启动和用户请求不会联网更新语料；SSE 只公开检索状态和来源数量，不返回来源正文或 URL。
 
 清理超过 60 天的未匹配报告：
 
@@ -203,6 +211,8 @@ Set-Location .\backend
 Set-Location .\backend
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -m pip_audit -r requirements.txt
+.\.venv\Scripts\python.exe scripts\evaluate_rag.py
 
 Set-Location ..\frontend
 npm test
@@ -210,7 +220,9 @@ npm run build
 npm audit --omit=dev
 ```
 
-当前验收基线：后端 13 项通过；前端 15 个测试文件、81 项通过；Vite 生产构建、Python 编译、`git diff --check`、SQLite 完整性/外键检查与全量快照迁移冒烟通过。
+当前验收基线：后端 25 项、前端 15 个文件 82 项通过；Vite production build、Python/npm 依赖审计、44 条 RAG 黄金查询、SQLite 完整性/外键与全量快照迁移冒烟均通过。
+
+## 备份
 
 停止后端后，至少备份：
 
