@@ -22,15 +22,25 @@ def report_fixture(app, *, user="test3", institution_index=0):
         person = User.query.filter_by(username=user).first()
         institution = Institution.query.order_by(Institution.id).all()[institution_index]
         indicator = IndicatorDict.query.filter_by(code="HR").first()
-        return person.real_name, person.health_id, institution.id, indicator.id
+        package = next(item for item in institution.packages if item.is_active)
+        return person.real_name, person.health_id, institution.id, package.id, indicator.id
 
 
-def create_locked_report(client, headers, name, health_id, institution_id, indicator_id, exam_day):
-    response = client.post("/api/org/reports", headers=headers, json={"subject_name": name, "subject_health_id": health_id, "exam_date": exam_day.isoformat()})
+def create_appointment(client, user_headers, org_headers, institution_id, package_id, exam_day):
+    response = client.post("/api/appointments", headers=user_headers, json={"institution_id": institution_id, "package_id": package_id, "appointment_date": exam_day.isoformat()})
+    assert response.status_code == 201
+    appointment_id = response.get_json()["item"]["id"]
+    assert client.post(f"/api/org/appointments/{appointment_id}/attend", headers=org_headers).status_code == 200
+    return appointment_id
+
+
+def create_locked_report(client, user_headers, org_headers, institution_id, package_id, indicator_id, exam_day):
+    appointment_id = create_appointment(client, user_headers, org_headers, institution_id, package_id, exam_day)
+    response = client.post("/api/org/reports", headers=org_headers, json={"appointment_id": appointment_id})
     assert response.status_code == 201
     report_id = response.get_json()["item"]["id"]
-    assert client.post(f"/api/org/reports/{report_id}/indicators", headers=headers, json={"indicator_dict_id": indicator_id, "value": "73"}).status_code == 201
-    assert client.post(f"/api/org/reports/{report_id}/lock", headers=headers).status_code == 200
+    assert client.post(f"/api/org/reports/{report_id}/indicators", headers=org_headers, json={"indicator_dict_id": indicator_id, "value": "73"}).status_code == 201
+    assert client.post(f"/api/org/reports/{report_id}/lock", headers=org_headers).status_code == 200
     return report_id
 
 
@@ -55,10 +65,10 @@ def test_health_identity_profile_and_multi_institution_accounts(app, client):
 
 
 def test_institution_submission_auto_archives_to_registered_user(app, client):
-    name, health_id, institution_id, indicator_id = report_fixture(app)
+    _name, _health_id, institution_id, package_id, indicator_id = report_fixture(app)
     user = login(client, "test3"); org = login(client, "institution1_staff1"); other_org = login(client, "institution2_staff1")
     first_day = date.today() + timedelta(days=7)
-    report_id = create_locked_report(client, org, name, health_id, institution_id, indicator_id, first_day)
+    report_id = create_locked_report(client, user, org, institution_id, package_id, indicator_id, first_day)
     assert client.put(f"/api/org/reports/{report_id}", headers=org, json={"exam_date": date.today().isoformat()}).status_code == 409
     submitted = client.post(f"/api/org/reports/{report_id}/submit", headers=org)
     assert submitted.status_code == 200 and submitted.get_json()["match_result"] == "matched"
@@ -70,18 +80,15 @@ def test_institution_submission_auto_archives_to_registered_user(app, client):
     assert client.get("/api/admin/records", headers=login(client, "admin", "admin123")).status_code == 404
 
 
-def test_report_lock_rejects_unknown_identity_and_submit_rechecks_active_user(app, client):
-    name, health_id, institution_id, indicator_id = report_fixture(app)
+def test_reports_require_appointments_and_submit_rechecks_active_user(app, client):
+    _name, health_id, institution_id, package_id, indicator_id = report_fixture(app)
     org = login(client, "institution1_staff1")
+    user_headers = login(client, "test3")
     day = date.today() + timedelta(days=20)
-    draft = client.post("/api/org/reports", headers=org, json={"subject_name": "不存在用户", "subject_health_id": "HID-UNKNOWN1", "exam_date": day.isoformat()})
-    report_id = draft.get_json()["item"]["id"]
-    assert client.post(f"/api/org/reports/{report_id}/indicators", headers=org, json={"indicator_dict_id": indicator_id, "value": "73"}).status_code == 201
-    rejected_lock = client.post(f"/api/org/reports/{report_id}/lock", headers=org)
-    assert rejected_lock.status_code == 409
-    assert "registered user not found" in rejected_lock.get_json()["message"]
+    direct = client.post("/api/org/reports", headers=org, json={"subject_name": "不存在用户", "subject_health_id": "HID-UNKNOWN1", "exam_date": day.isoformat()})
+    assert direct.status_code == 400 and "appointment_id" in direct.get_json()["message"]
 
-    locked_id = create_locked_report(client, org, name, health_id, institution_id, indicator_id, day + timedelta(days=1))
+    locked_id = create_locked_report(client, user_headers, org, institution_id, package_id, indicator_id, day + timedelta(days=1))
     with app.app_context():
         user = User.query.filter_by(health_id=health_id).first()
         user.is_active = False
@@ -92,7 +99,7 @@ def test_report_lock_rejects_unknown_identity_and_submit_rechecks_active_user(ap
     with app.app_context():
         report = db.session.get(InstitutionReport, locked_id)
         assert report.status == "locked"
-        assert report.matched_user_id is None
+        assert report.matched_user_id is not None
         assert {item.status for item in InstitutionReport.query.all()} <= {"draft", "locked", "published"}
 
 
@@ -169,10 +176,12 @@ def test_ai_requires_per_request_consent_and_excludes_identity(app, client):
 
 def test_org_ocr_mock_creates_reviewable_draft_and_lock_deletes_file(app, client):
     headers = login(client, "institution2_staff1")
-    name, health_id, _institution_id, _indicator_id = report_fixture(app, institution_index=1)
+    user_headers = login(client, "test3")
+    _name, _health_id, institution_id, package_id, _indicator_id = report_fixture(app, institution_index=1)
+    appointment_id = create_appointment(client, user_headers, headers, institution_id, package_id, date.today() + timedelta(days=25))
     response = client.post(
         "/api/org/reports/ocr", headers=headers,
-        data={"file": (BytesIO(b"mock report"), "report.pdf"), "subject_name": name, "subject_health_id": health_id, "exam_date": (date.today() + timedelta(days=40)).isoformat()},
+        data={"file": (BytesIO(b"mock report"), "report.pdf"), "appointment_id": str(appointment_id)},
         content_type="multipart/form-data",
     )
     assert response.status_code == 201

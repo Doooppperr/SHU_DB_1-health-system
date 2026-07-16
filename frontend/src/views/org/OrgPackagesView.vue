@@ -1,7 +1,7 @@
 <template>
   <div class="workspace-page">
     <section class="page-intro">
-      <div><p>服务项目维护</p><h2>体检套餐</h2><span>停用套餐不会破坏历史档案，普通用户只会看到当前启用套餐。</span></div>
+      <div><p>服务项目维护</p><h2>体检套餐</h2><span>所有新增、修改、下架和恢复都需管理员审核，通过后才会生效。</span></div>
       <el-button type="primary" @click="openCreate">新增套餐</el-button>
     </section>
     <el-alert v-if="errorMessage" :title="errorMessage" type="error" show-icon :closable="false" />
@@ -12,7 +12,8 @@
         <el-table-column label="适用人群" width="120"><template #default="scope">{{ genderLabel(scope.row.gender_scope) }}</template></el-table-column>
         <el-table-column label="价格" width="120"><template #default="scope">¥ {{ Number(scope.row.price || 0).toFixed(2) }}</template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="scope"><el-tag :type="scope.row.is_active ? 'success' : 'info'">{{ scope.row.is_active ? "启用" : "已停用" }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="190" fixed="right"><template #default="scope"><el-button link type="primary" @click="openEdit(scope.row)">编辑</el-button><el-button v-if="scope.row.is_active" link type="danger" @click="deactivate(scope.row)">停用</el-button><el-button v-else link type="success" @click="restore(scope.row)">恢复</el-button></template></el-table-column>
+        <el-table-column label="审核" width="110"><template #default="scope"><el-tag v-if="scope.row.pending_request" type="warning">待审核</el-tag><span v-else>—</span></template></el-table-column>
+        <el-table-column label="操作" width="190" fixed="right"><template #default="scope"><el-button link type="primary" :disabled="!!scope.row.pending_request" @click="openEdit(scope.row)">编辑</el-button><el-button v-if="scope.row.is_active" link type="danger" :disabled="!!scope.row.pending_request" @click="deactivate(scope.row)">申请下架</el-button><el-button v-else link type="success" :disabled="!!scope.row.pending_request" @click="restore(scope.row)">申请恢复</el-button></template></el-table-column>
       </el-table>
     </el-card>
 
@@ -34,7 +35,7 @@
 <script setup>
 import { onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { createOrgPackage, deactivateOrgPackage, fetchOrgPackages, updateOrgPackage } from "../../api/org";
+import { createOrgPackage, deactivateOrgPackage, fetchOrgPackages, reactivateOrgPackage, updateOrgPackage } from "../../api/org";
 
 const genderOptions = [{ value: "all", label: "不限" }, { value: "male", label: "男性" }, { value: "female", label: "女性" }, { value: "female_all", label: "女性全龄" }];
 const genderLabel = (value) => genderOptions.find((item) => item.value === value)?.label || value || "不限";
@@ -48,10 +49,10 @@ async function save() {
   if (!form.name.trim() || !form.focus_area.trim()) { ElMessage.error("请填写套餐名称和重点方向"); return; }
   saving.value = true;
   const payload = { name: form.name.trim(), focus_area: form.focus_area.trim(), gender_scope: form.gender_scope, price: Number(form.price), description: form.description.trim() || null };
-  try { if (form.id) await updateOrgPackage(form.id, payload); else await createOrgPackage(payload); ElMessage.success(form.id ? "套餐已更新" : "套餐已创建"); dialogVisible.value = false; await load(); }
+  try { if (form.id) await updateOrgPackage(form.id, payload); else await createOrgPackage(payload); ElMessage.success("变更申请已提交，管理员通过后生效"); dialogVisible.value = false; await load(); }
   catch (error) { ElMessage.error(error?.response?.data?.message || "套餐保存失败"); } finally { saving.value = false; }
 }
-async function deactivate(item) { try { await ElMessageBox.confirm("停用后普通用户将无法再选择该套餐，历史档案不受影响。", "停用套餐", { type:"warning", confirmButtonText:"确认停用", cancelButtonText:"取消" }); await deactivateOrgPackage(item.id); ElMessage.success("套餐已停用"); await load(); } catch (error) { if (error !== "cancel" && error !== "close") ElMessage.error(error?.response?.data?.message || "停用失败"); } }
-async function restore(item) { try { await updateOrgPackage(item.id, { is_active: true }); ElMessage.success("套餐已恢复"); await load(); } catch (error) { ElMessage.error(error?.response?.data?.message || "恢复失败"); } }
+async function deactivate(item) { try { await ElMessageBox.confirm("提交下架申请后，管理员通过前套餐仍保持当前状态。", "申请下架", { type:"warning", confirmButtonText:"提交申请", cancelButtonText:"取消" }); await deactivateOrgPackage(item.id); ElMessage.success("下架申请已提交"); await load(); } catch (error) { if (error !== "cancel" && error !== "close") ElMessage.error(error?.response?.data?.message || "申请失败"); } }
+async function restore(item) { try { await reactivateOrgPackage(item.id); ElMessage.success("恢复申请已提交"); await load(); } catch (error) { ElMessage.error(error?.response?.data?.message || "申请失败"); } }
 onMounted(load);
 </script>

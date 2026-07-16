@@ -69,3 +69,6 @@ export function issueInstitutionInvite(institutionId) {
 }
 
 export const deleteInstitutionAccount = (userId) => http.delete(`/admin/institution-accounts/${userId}`);
+export const fetchAdminPackageChangeRequests = (params = {}) => http.get("/admin/package-change-requests", { params });
+export const approveAdminPackageChangeRequest = (id, reviewNote = null) => http.post(`/admin/package-change-requests/${id}/approve`, { review_note: reviewNote });
+export const rejectAdminPackageChangeRequest = (id, reviewNote = null) => http.post(`/admin/package-change-requests/${id}/reject`, { review_note: reviewNote });

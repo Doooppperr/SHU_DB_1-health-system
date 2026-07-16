@@ -65,6 +65,7 @@ class InstitutionReport(db.Model):
     subject_health_id = db.Column(db.String(20), nullable=False, index=True)
     exam_date = db.Column(db.Date, nullable=False, index=True)
     package_id = db.Column(db.Integer, db.ForeignKey("packages.id", ondelete="SET NULL"), nullable=True)
+    appointment_id = db.Column(db.Integer, db.ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True, unique=True, index=True)
     matched_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     status = db.Column(db.String(24), nullable=False, default="draft", index=True)
     ocr_diagnostics = db.Column(db.JSON, nullable=True)
@@ -78,6 +79,7 @@ class InstitutionReport(db.Model):
     creator = db.relationship("User", foreign_keys=[created_by_user_id])
     owner = db.relationship("User", foreign_keys=[matched_user_id])
     package = db.relationship("Package")
+    appointment = db.relationship("Appointment", back_populates="report")
     indicators = db.relationship("ReportIndicator", back_populates="report", cascade="all, delete-orphan", order_by="ReportIndicator.id.asc()")
 
     # Transitional internal aliases keep the mature AI fact builder usable while
@@ -98,6 +100,7 @@ class InstitutionReport(db.Model):
             "display_id": self.display_id,
             "institution_id": self.institution_id,
             "package_id": self.package_id,
+            "appointment_id": self.appointment_id,
             "exam_date": self.exam_date.isoformat(),
             "status": self.status,
             "subject_name_snapshot": self.subject_name_snapshot,

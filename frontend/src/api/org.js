@@ -58,3 +58,12 @@ export function uploadOrgReportOcr(file, fields) {
   Object.entries(fields).forEach(([key, value]) => { if (value !== null && value !== "") form.append(key, value); });
   return http.post("/org/reports/ocr", form, { headers: { "Content-Type": "multipart/form-data" } });
 }
+
+export const reactivateOrgPackage = (packageId) => http.post(`/org/packages/${packageId}/reactivate`);
+export const fetchOrgPackageChangeRequests = () => http.get("/org/package-change-requests");
+export const withdrawOrgPackageChangeRequest = (id) => http.post(`/org/package-change-requests/${id}/withdraw`);
+export const fetchOrgAppointments = (params = {}) => http.get("/org/appointments", { params });
+export const attendOrgAppointment = (id) => http.post(`/org/appointments/${id}/attend`);
+export const invalidateOrgAppointment = (id) => http.post(`/org/appointments/${id}/invalidate`);
+export const fetchOrgAppointmentCapacity = () => http.get("/org/appointment-capacity");
+export const updateOrgAppointmentCapacity = (dailyAppointmentLimit) => http.put("/org/appointment-capacity", { daily_appointment_limit: dailyAppointmentLimit });

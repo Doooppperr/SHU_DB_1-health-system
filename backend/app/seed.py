@@ -6,8 +6,9 @@ from flask import current_app
 
 from app.extensions import db
 from app.models import (
-    FriendRelation, IndicatorCategory, IndicatorDict,
-    Institution, InstitutionReport, Package, ReportIndicator, SelfMeasurement, User,
+    Appointment, FriendRelation, IndicatorCategory, IndicatorDict,
+    Institution, InstitutionReport, Package, PackageChangeRequest, ReportIndicator,
+    SelfMeasurement, User,
 )
 
 
@@ -297,6 +298,123 @@ def seed_core_data():
     seed_institutions_and_packages()
     seed_indicator_dicts()
     seed_demo_data()
+    seed_demo_workflows()
+
+
+def seed_demo_workflows():
+    """Seed synthetic appointment and package-review states for every demo role."""
+    people = User.query.filter(User.username.in_([f"test{i}" for i in range(1, 6)])).order_by(User.username).all()
+    institutions = Institution.query.order_by(Institution.id).limit(3).all()
+    if len(people) != 5 or len(institutions) != 3:
+        return
+    staff = [
+        User.query.filter_by(role="institution_admin", managed_institution_id=item.id).order_by(User.id).first()
+        for item in institutions
+    ]
+    reviewer = User.query.filter_by(username="demo_admin", role="admin").first()
+    now = datetime.now(timezone.utc)
+    today = date.today()
+
+    if Appointment.query.first() is None:
+        institutions[0].daily_appointment_limit = 3
+        institutions[1].daily_appointment_limit = 5
+        institutions[2].daily_appointment_limit = None
+        for index, person in enumerate(people, start=1):
+            institution = institutions[(index - 1) % len(institutions)]
+            package = next(item for item in institution.packages if item.is_active)
+            common = {
+                "user_id": person.id,
+                "institution_id": institution.id,
+                "package_id": package.id,
+                "user_name_snapshot": person.real_name,
+                "user_health_id_snapshot": person.health_id,
+                "package_name_snapshot": package.name,
+                "package_price_snapshot": package.price,
+            }
+            future_day = today + timedelta(days=index)
+            db.session.add(Appointment(**common, appointment_date=future_day, active_date_key=future_day, status="unfulfilled", created_at=now - timedelta(days=2)))
+            awaiting_day = today + timedelta(days=10 + index)
+            db.session.add(Appointment(**common, appointment_date=awaiting_day, active_date_key=awaiting_day, status="awaiting_report", attended_at=now - timedelta(hours=index), created_at=now - timedelta(days=3)))
+            invalid_day = today + timedelta(days=20 + index)
+            db.session.add(Appointment(**common, appointment_date=invalid_day, active_date_key=None, status="invalidated", invalidated_at=now - timedelta(hours=index), created_at=now - timedelta(days=4)))
+            cancelled_day = today + timedelta(days=25 + index)
+            db.session.add(Appointment(**common, appointment_date=cancelled_day, active_date_key=None, status="cancelled", cancelled_at=now - timedelta(hours=index), created_at=now - timedelta(days=5)))
+
+            report = InstitutionReport.query.filter_by(matched_user_id=person.id, status="published").filter(InstitutionReport.package_id.isnot(None)).order_by(InstitutionReport.exam_date.asc()).first()
+            if report is not None:
+                report_package = report.package
+                fulfilled = Appointment(
+                    user_id=person.id,
+                    institution_id=report.institution_id,
+                    package_id=report.package_id,
+                    appointment_date=report.exam_date,
+                    active_date_key=report.exam_date,
+                    status="fulfilled",
+                    user_name_snapshot=person.real_name,
+                    user_health_id_snapshot=person.health_id,
+                    package_name_snapshot=report_package.name,
+                    package_price_snapshot=report_package.price,
+                    attended_at=report.locked_at,
+                    fulfilled_at=report.published_at,
+                    created_at=report.created_at,
+                )
+                db.session.add(fulfilled)
+                db.session.flush()
+                report.appointment_id = fulfilled.id
+        db.session.commit()
+
+    if PackageChangeRequest.query.first() is None and reviewer is not None:
+        first_package = institutions[0].packages[0]
+        second_package = institutions[1].packages[0]
+        third_package = institutions[2].packages[0]
+        db.session.add_all([
+            PackageChangeRequest(
+                institution_id=institutions[0].id,
+                action="create",
+                status="pending",
+                proposed_data={"name": "预约联调待审套餐", "focus_area": "预约流程", "gender_scope": "all", "price": 288.0, "description": "合成待审核数据", "is_active": True},
+                requested_by_user_id=staff[0].id,
+                requested_at=now - timedelta(hours=2),
+            ),
+            PackageChangeRequest(
+                institution_id=institutions[1].id,
+                package_id=second_package.id,
+                action="update",
+                status="approved",
+                before_data=second_package.to_dict(),
+                proposed_data=second_package.to_dict(),
+                requested_by_user_id=staff[1].id,
+                reviewed_by_user_id=reviewer.id,
+                requested_at=now - timedelta(days=3),
+                reviewed_at=now - timedelta(days=2),
+                review_note="合成通过记录",
+            ),
+            PackageChangeRequest(
+                institution_id=institutions[2].id,
+                package_id=third_package.id,
+                action="deactivate",
+                status="rejected",
+                before_data=third_package.to_dict(),
+                proposed_data={**third_package.to_dict(), "is_active": False},
+                requested_by_user_id=staff[2].id,
+                reviewed_by_user_id=reviewer.id,
+                requested_at=now - timedelta(days=2),
+                reviewed_at=now - timedelta(days=1),
+                review_note="合成驳回记录",
+            ),
+            PackageChangeRequest(
+                institution_id=institutions[0].id,
+                package_id=first_package.id,
+                action="update",
+                status="withdrawn",
+                before_data=first_package.to_dict(),
+                proposed_data=first_package.to_dict(),
+                requested_by_user_id=staff[0].id,
+                requested_at=now - timedelta(days=1),
+                withdrawn_at=now - timedelta(hours=12),
+            ),
+        ])
+        db.session.commit()
 
 
 def _seed_self_measurements(user, index, indicators, now):

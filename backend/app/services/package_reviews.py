@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+from app.extensions import db
+from app.models import Package, PackageChangeRequest
+from app.services.institution_management import ManagementValidationError, apply_package_payload
+
+
+def _package_data(package):
+    return {
+        "name": package.name,
+        "focus_area": package.focus_area,
+        "gender_scope": package.gender_scope,
+        "price": float(package.price),
+        "description": package.description,
+        "is_active": package.is_active,
+    }
+
+
+def _normalized_package_data(institution_id, payload, *, base=None):
+    source = _package_data(base) if base is not None else {}
+    source.update(payload or {})
+    candidate = Package(institution_id=institution_id)
+    apply_package_payload(candidate, source, creating=base is None)
+    if base is None and candidate.is_active is None:
+        candidate.is_active = True
+    return _package_data(candidate)
+
+
+def create_change_request(institution, requester, action, *, package=None, payload=None):
+    if action not in {"create", "update", "deactivate", "reactivate"}:
+        raise ManagementValidationError("invalid package change action")
+    if action != "create" and package is None:
+        raise ManagementValidationError("package is required")
+    if package is not None:
+        pending = PackageChangeRequest.query.filter_by(package_id=package.id, status="pending").first()
+        if pending:
+            raise ManagementValidationError("该套餐已有待审核申请，请先撤回或等待审核")
+
+    before_data = _package_data(package) if package is not None else None
+    proposed_data = None
+    if action == "create":
+        proposed_data = _normalized_package_data(institution.id, payload, base=None)
+    elif action == "update":
+        proposed_data = _normalized_package_data(institution.id, payload, base=package)
+    elif action == "deactivate":
+        if not package.is_active:
+            raise ManagementValidationError("package is already inactive")
+        proposed_data = {**before_data, "is_active": False}
+    elif action == "reactivate":
+        if package.is_active:
+            raise ManagementValidationError("package is already active")
+        proposed_data = {**before_data, "is_active": True}
+
+    requested_name = (proposed_data or {}).get("name")
+    if action == "create" and requested_name:
+        existing = Package.query.filter_by(institution_id=institution.id, name=requested_name).first()
+        if existing:
+            raise ManagementValidationError("package name already exists")
+        for pending in PackageChangeRequest.query.filter_by(institution_id=institution.id, action="create", status="pending").all():
+            if (pending.proposed_data or {}).get("name") == requested_name:
+                raise ManagementValidationError("同名套餐已有待审核申请")
+
+    item = PackageChangeRequest(
+        institution_id=institution.id,
+        package_id=package.id if package else None,
+        action=action,
+        status="pending",
+        before_data=before_data,
+        proposed_data=proposed_data,
+        requested_by_user_id=requester.id,
+    )
+    db.session.add(item)
+    return item
+
+
+def approve_change_request(item, reviewer, note=None):
+    if item.status != "pending":
+        raise ManagementValidationError("only pending requests can be reviewed")
+    if item.action == "create":
+        package = Package(institution_id=item.institution_id)
+        apply_package_payload(package, item.proposed_data or {}, creating=True)
+        package.is_active = bool((item.proposed_data or {}).get("is_active", True))
+        db.session.add(package)
+        db.session.flush()
+        item.package_id = package.id
+    else:
+        package = db.session.get(Package, item.package_id)
+        if package is None or package.institution_id != item.institution_id:
+            raise ManagementValidationError("package no longer exists")
+        if item.action == "update":
+            apply_package_payload(package, item.proposed_data or {})
+        elif item.action == "deactivate":
+            package.is_active = False
+        elif item.action == "reactivate":
+            package.is_active = True
+    item.status = "approved"
+    item.reviewed_by_user_id = reviewer.id
+    item.review_note = str(note or "").strip() or None
+    return item

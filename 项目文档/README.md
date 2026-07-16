@@ -1,6 +1,6 @@
 # 康康健健 HealthDoc 项目文档索引
 
-> 最后核对：2026-07-16。当前实现为 SQLite schema v5、机构报告即时永久归档、亲友只读授权、标签页级登录会话隔离与本地双通道 RAG；自动化基线为后端 26 项、前端 15 个文件 85 项，生产构建、依赖审计、RAG 黄金查询和全量快照迁移冒烟通过。
+> 最后核对：2026-07-16。当前实现为 SQLite schema v6、预约前置的机构报告永久归档、套餐变更审核、亲友只读授权、标签页级登录会话隔离与本地双通道 RAG；自动化基线为后端 31 项、前端 15 个文件 88 项，生产构建、依赖审计、RAG 黄金查询和全量快照迁移冒烟通过。
 
 本目录描述项目当前实现的完整有效范围。文档必须从整个项目核对现存功能，不能只记录最近一次重构新增的部分。
 
@@ -54,9 +54,9 @@
 |---|---|---|
 | 登录、注册、验证码、角色跳转 | `backend/app/auth/`、认证 Store、前端路由 | 前后端 README、需求方案、认证/路由测试 |
 | 个人资料与健康身份 | `backend/app/profile/`、`models/user.py`、`ProfileView.vue` | 需求方案、数据库两文档、隐私测试 |
-| 自测、登记、时间线和趋势 | `backend/app/health/`、健康 API 与对应视图 | 需求、数据库、AI 数据边界、测试报告 |
+| 自测、预约、时间线和趋势 | `backend/app/appointments/`、`backend/app/health/` 与对应视图 | 需求、数据库、AI 数据边界、测试报告 |
 | 机构报告和匹配 | `backend/app/org/`、`exam_reports/`、`services/reports.py` | 需求、数据库、AI/OCR、演示、状态机测试 |
-| 机构、套餐、邀请码和相册 | admin/org/institutions 路由与服务 | 需求、演示、数据库、角色测试 |
+| 机构、套餐审核、邀请码和相册 | admin/org/institutions 路由与服务 | 需求、演示、数据库、角色测试 |
 | 亲友或评论 | friends/comments 路由与视图 | 需求、隐私规则、测试报告 |
 | AI 流式对话、分析或 RAG | `backend/app/ai/`、`backend/rag_sources/`、AI Store 与助手组件 | AI/OCR 说明、来源清单、Mock、SSE、检索与前端交互测试 |
 | OCR 解析或映射 | OCR 服务、org 报告路由与机构报告页 | AI/OCR 说明、解析/文件删除测试、演示指南 |

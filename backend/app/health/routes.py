@@ -5,7 +5,7 @@ from flask import g, request
 from app.extensions import db
 from app.health import health_bp
 from app.models import (
-    FriendRelation, IndicatorDict, InstitutionReport, ReportIndicator, SelfMeasurement, User,
+    Appointment, FriendRelation, IndicatorDict, InstitutionReport, ReportIndicator, SelfMeasurement, User,
 )
 from app.services.permissions import ROLE_USER, roles_required
 
@@ -152,5 +152,22 @@ def timeline():
             payload.pop("subject_name_snapshot", None)
             payload.pop("matched_user_id", None)
         events.append({"type": "institution_report", "occurred_at": (row.published_at or datetime.combine(row.exam_date, time.min)).isoformat(), "title": f"{row.institution.name} 体检报告 · 机构已提交", "item": payload})
+    for row in Appointment.query.filter_by(user_id=owner.id, status="invalidated").all():
+        events.append({
+            "type": "appointment_invalidated",
+            "occurred_at": datetime.combine(row.appointment_date, time.min).isoformat(),
+            "title": "该预约已失效，请重新预约或联系机构",
+            "item": {
+                "id": row.id,
+                "appointment_date": row.appointment_date.isoformat(),
+                "status": row.status,
+                "institution": {
+                    "id": row.institution.id,
+                    "name": row.institution.name,
+                    "branch_name": row.institution.branch_name,
+                } if row.institution else None,
+                "package_name": row.package_name_snapshot,
+            },
+        })
     events.sort(key=lambda item: item["occurred_at"], reverse=True)
     return {"owner": owner.friend_identity_dict(), "items": events}, 200

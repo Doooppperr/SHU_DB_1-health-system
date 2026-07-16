@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.admin import admin_bp
 from app.extensions import db
-from app.models import Comment, Institution, InstitutionInvite, Package, User
+from app.models import Comment, Institution, InstitutionInvite, Package, PackageChangeRequest, User
 from app.services.institution_management import (
     ManagementValidationError,
     apply_institution_payload,
@@ -22,6 +22,7 @@ from app.services.institution_management import (
     save_institution_image,
 )
 from app.services.permissions import ROLE_ADMIN, roles_required
+from app.services.package_reviews import approve_change_request
 
 
 def institution_payload(institution):
@@ -59,6 +60,7 @@ def dashboard():
             "institution_count": institution_count,
             "active_institution_count": Institution.query.filter_by(is_active=True).count(),
             "pending_comment_count": Comment.query.filter_by(is_visible=False).count(),
+            "pending_package_review_count": PackageChangeRequest.query.filter_by(status="pending").count(),
         }
     }, 200
 
@@ -157,50 +159,70 @@ def list_packages(institution_id):
 @admin_bp.post("/institutions/<int:institution_id>/packages")
 @roles_required(ROLE_ADMIN)
 def create_package(institution_id):
-    item, error = institution_or_error(institution_id)
-    if error:
-        return error
-    package = Package(institution_id=item.id)
-    try:
-        apply_package_payload(package, request.get_json(silent=True) or {}, creating=True)
-        db.session.add(package)
-        db.session.commit()
-    except ManagementValidationError as exc:
-        db.session.rollback()
-        return {"message": str(exc)}, 400
-    except IntegrityError:
-        db.session.rollback()
-        return {"message": "package name already exists for the institution"}, 409
-    return {"item": package.to_dict()}, 201
+    return {"message": "管理员不能直接新增套餐，请审核机构提交的变更申请"}, 405
 
 
 @admin_bp.put("/institutions/<int:institution_id>/packages/<int:package_id>")
 @roles_required(ROLE_ADMIN)
 def update_package(institution_id, package_id):
-    package = Package.query.filter_by(id=package_id, institution_id=institution_id).first()
-    if not package:
-        return {"message": "package not found"}, 404
-    try:
-        apply_package_payload(package, request.get_json(silent=True) or {})
-        db.session.commit()
-    except ManagementValidationError as exc:
-        db.session.rollback()
-        return {"message": str(exc)}, 400
-    except IntegrityError:
-        db.session.rollback()
-        return {"message": "package name already exists for the institution"}, 409
-    return {"item": package.to_dict()}, 200
+    return {"message": "管理员不能直接修改套餐，请审核机构提交的变更申请"}, 405
 
 
 @admin_bp.delete("/institutions/<int:institution_id>/packages/<int:package_id>")
 @roles_required(ROLE_ADMIN)
 def deactivate_package(institution_id, package_id):
-    package = Package.query.filter_by(id=package_id, institution_id=institution_id).first()
-    if not package:
-        return {"message": "package not found"}, 404
-    package.is_active = False
+    return {"message": "管理员不能直接上下架套餐，请审核机构提交的变更申请"}, 405
+
+
+@admin_bp.get("/package-change-requests")
+@roles_required(ROLE_ADMIN)
+def list_package_change_requests():
+    query = PackageChangeRequest.query
+    status = (request.args.get("status") or "").strip()
+    if status:
+        query = query.filter_by(status=status)
+    rows = query.order_by(PackageChangeRequest.requested_at.desc(), PackageChangeRequest.id.desc()).all()
+    return {"items": [item.to_dict() for item in rows]}, 200
+
+
+def _pending_change_request(request_id):
+    item = PackageChangeRequest.query.filter_by(id=request_id).with_for_update().first()
+    if item is None:
+        return None, ({"message": "review request not found"}, 404)
+    if item.status != "pending":
+        return None, ({"message": "only pending requests can be reviewed"}, 409)
+    return item, None
+
+
+@admin_bp.post("/package-change-requests/<int:request_id>/approve")
+@roles_required(ROLE_ADMIN)
+def approve_package_change(request_id):
+    item, error = _pending_change_request(request_id)
+    if error:
+        return error
+    try:
+        approve_change_request(item, g.current_user, (request.get_json(silent=True) or {}).get("review_note"))
+        item.reviewed_at = datetime.now(timezone.utc)
+        db.session.commit()
+    except ManagementValidationError as exc:
+        db.session.rollback(); return {"message": str(exc)}, 409
+    except IntegrityError:
+        db.session.rollback(); return {"message": "套餐名称冲突，申请无法生效"}, 409
+    return {"item": item.to_dict()}, 200
+
+
+@admin_bp.post("/package-change-requests/<int:request_id>/reject")
+@roles_required(ROLE_ADMIN)
+def reject_package_change(request_id):
+    item, error = _pending_change_request(request_id)
+    if error:
+        return error
+    item.status = "rejected"
+    item.reviewed_by_user_id = g.current_user.id
+    item.review_note = str((request.get_json(silent=True) or {}).get("review_note") or "").strip() or None
+    item.reviewed_at = datetime.now(timezone.utc)
     db.session.commit()
-    return {"item": package.to_dict()}, 200
+    return {"item": item.to_dict()}, 200
 
 
 @admin_bp.get("/institutions/<int:institution_id>/images")

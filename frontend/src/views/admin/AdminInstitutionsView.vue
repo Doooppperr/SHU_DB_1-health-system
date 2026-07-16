@@ -14,7 +14,7 @@
         <el-table-column label="套餐" width="90"><template #default="scope">{{ scope.row.package_count ?? 0 }}/{{ scope.row.total_package_count ?? scope.row.package_count ?? 0 }}</template></el-table-column>
         <el-table-column label="机构账号" min-width="140"><template #default="scope">{{ scope.row.administrator_count || 0 }} 个</template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="scope"><el-tag :type="scope.row.is_active ? 'success' : 'info'">{{ scope.row.is_active ? "启用" : "已停用" }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="330" fixed="right"><template #default="scope"><el-button link type="primary" @click="openEdit(scope.row)">编辑</el-button><el-button link @click="openPackages(scope.row)">套餐</el-button><el-button link @click="openGallery(scope.row)">相册</el-button><el-button v-if="scope.row.is_active" link type="danger" @click="deactivate(scope.row)">停用</el-button><el-button v-else link type="success" @click="restore(scope.row)">恢复</el-button></template></el-table-column>
+        <el-table-column label="操作" width="330" fixed="right"><template #default="scope"><el-button link type="primary" @click="openEdit(scope.row)">编辑机构</el-button><el-button link @click="openPackages(scope.row)">查看套餐</el-button><el-button link @click="openGallery(scope.row)">相册</el-button><el-button v-if="scope.row.is_active" link type="danger" @click="deactivate(scope.row)">停用机构</el-button><el-button v-else link type="success" @click="restore(scope.row)">恢复机构</el-button></template></el-table-column>
       </el-table>
     </el-card>
 
@@ -33,10 +33,10 @@
       <template #footer><el-button @click="dialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveInstitution">保存</el-button></template>
     </el-dialog>
 
-    <el-drawer v-model="packageDrawerVisible" :title="`${selectedInstitution?.name || ''} · 套餐管理`" size="min(760px, 94vw)">
-      <div class="drawer-toolbar"><p>停用套餐不会影响历史报告。</p><el-button type="primary" @click="openPackageCreate">新增套餐</el-button></div>
+    <el-drawer v-model="packageDrawerVisible" :title="`${selectedInstitution?.name || ''} · 当前套餐`" size="min(760px, 94vw)">
+      <el-alert title="管理员在“审核记录”中通过或驳回机构申请，不能在这里直接修改套餐。" type="info" show-icon :closable="false" />
       <el-table :data="packages" v-loading="packagesLoading" empty-text="暂无套餐">
-        <el-table-column prop="name" label="套餐" min-width="160" /><el-table-column prop="focus_area" label="重点方向" min-width="140" /><el-table-column label="价格" width="100"><template #default="scope">¥{{ Number(scope.row.price || 0).toFixed(2) }}</template></el-table-column><el-table-column label="状态" width="90"><template #default="scope"><el-tag :type="scope.row.is_active ? 'success' : 'info'">{{ scope.row.is_active ? "启用" : "停用" }}</el-tag></template></el-table-column><el-table-column label="操作" width="150"><template #default="scope"><el-button link type="primary" @click="openPackageEdit(scope.row)">编辑</el-button><el-button v-if="scope.row.is_active" link type="danger" @click="deactivatePackage(scope.row)">停用</el-button><el-button v-else link type="success" @click="restorePackage(scope.row)">恢复</el-button></template></el-table-column>
+        <el-table-column prop="name" label="套餐" min-width="160" /><el-table-column prop="focus_area" label="重点方向" min-width="140" /><el-table-column label="价格" width="100"><template #default="scope">¥{{ Number(scope.row.price || 0).toFixed(2) }}</template></el-table-column><el-table-column label="状态" width="90"><template #default="scope"><el-tag :type="scope.row.is_active ? 'success' : 'info'">{{ scope.row.is_active ? "启用" : "停用" }}</el-tag></template></el-table-column>
       </el-table>
     </el-drawer>
 
@@ -58,10 +58,6 @@
       </div>
     </el-drawer>
 
-    <el-dialog v-model="packageDialogVisible" :title="packageForm.id ? '编辑套餐' : '新增套餐'" width="560px" append-to-body>
-      <el-form :model="packageForm" label-position="top"><el-form-item label="套餐名称" required><el-input v-model="packageForm.name" /></el-form-item><div class="responsive-form-grid"><el-form-item label="重点方向" required><el-input v-model="packageForm.focus_area" /></el-form-item><el-form-item label="适用人群"><el-select v-model="packageForm.gender_scope" style="width:100%"><el-option label="不限" value="all" /><el-option label="男性" value="male" /><el-option label="女性" value="female" /><el-option label="女性全龄" value="female_all" /></el-select></el-form-item><el-form-item label="价格"><el-input-number v-model="packageForm.price" :min="0" :precision="2" style="width:100%" /></el-form-item></div><el-form-item label="说明"><el-input v-model="packageForm.description" type="textarea" :rows="3" /></el-form-item></el-form>
-      <template #footer><el-button @click="packageDialogVisible = false">取消</el-button><el-button type="primary" :loading="packageSaving" @click="savePackage">保存</el-button></template>
-    </el-dialog>
   </div>
 </template>
 

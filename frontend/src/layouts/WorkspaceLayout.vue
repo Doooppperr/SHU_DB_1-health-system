@@ -105,6 +105,7 @@ const menus = {
     { name: "trends", label: "指标趋势", icon: "趋" },
     { name: "friends", label: "亲友授权", icon: "友" },
     { name: "institutions", label: "体检机构", icon: "院" },
+    { name: "appointments", label: "体检预约", icon: "约" },
     { name: "my-comments", label: "我的评论", icon: "评" },
     { name: "profile", label: "个人资料", icon: "我" },
   ],
@@ -113,7 +114,8 @@ const menus = {
     { name: "org-profile", label: "机构资料", icon: "资" },
     { name: "org-gallery", label: "机构相册", icon: "图" },
     { name: "org-packages", label: "体检套餐", icon: "套" },
-    { name: "org-reports", label: "体检报告", icon: "报" },
+    { name: "org-reports", label: "体检管理", icon: "检" },
+    { name: "org-package-reviews", label: "信息审核", icon: "审" },
   ],
   admin: [
     { name: "admin-dashboard", label: "系统总览", icon: "总" },
@@ -121,6 +123,7 @@ const menus = {
     { name: "admin-invites", label: "邀请码", icon: "邀" },
     { name: "admin-users", label: "用户与角色", icon: "用" },
     { name: "admin-comments", label: "评论审核", icon: "评" },
+    { name: "admin-package-reviews", label: "审核记录", icon: "审" },
   ],
 };
 

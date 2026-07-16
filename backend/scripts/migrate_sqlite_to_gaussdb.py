@@ -134,7 +134,13 @@ def _reset_sequences(connection) -> None:
             )
 
 
-def migrate(source_path: Path, target_url: str, replace: bool = False) -> dict[str, int]:
+def migrate(
+    source_path: Path,
+    target_url: str,
+    replace: bool = False,
+    *,
+    allow_legacy_source: bool = False,
+) -> dict[str, int]:
     source_path = source_path.expanduser().resolve()
     if not source_path.is_file():
         raise FileNotFoundError(f"SQLite source not found: {source_path}")
@@ -163,7 +169,7 @@ def migrate(source_path: Path, target_url: str, replace: bool = False) -> dict[s
         available = _source_tables(source)
         required = set(db.metadata.tables)
         missing = sorted(required - available)
-        if missing:
+        if missing and not allow_legacy_source:
             raise RuntimeError("SQLite source is missing tables: " + ", ".join(missing))
 
         with engine.begin() as target:
@@ -173,14 +179,20 @@ def migrate(source_path: Path, target_url: str, replace: bool = False) -> dict[s
             _ensure_empty_destination(target)
 
             for table in db.metadata.sorted_tables:
+                if table.name not in available:
+                    expected_counts[table.name] = 0
+                    continue
                 rows = source.execute(f'SELECT * FROM "{table.name}"').fetchall()
                 expected_counts[table.name] = len(rows)
                 if not rows:
                     continue
+                source_columns = set(rows[0].keys())
                 payload = []
                 for row in rows:
                     item = {}
                     for column in table.columns:
+                        if column.name not in source_columns:
+                            continue
                         value = row[column.name]
                         if (
                             table.name == "institution_reports"

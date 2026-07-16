@@ -4,14 +4,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.extensions import db
-from app.models import InstitutionReport, ReportIndicator, SelfMeasurement, User
+from app.models import Appointment, InstitutionReport, PackageChangeRequest, ReportIndicator, SelfMeasurement, User
 from app.schema import CURRENT_SCHEMA_VERSION
 
 
-def test_schema_v5_uses_permanent_report_archiving(app):
+def test_schema_v6_uses_appointments_reviews_and_permanent_report_archiving(app):
     with app.app_context():
-        assert CURRENT_SCHEMA_VERSION == 5
-        assert {"self_measurements", "institution_reports", "report_indicators"} <= set(db.metadata.tables)
+        assert CURRENT_SCHEMA_VERSION == 6
+        assert {"self_measurements", "institution_reports", "report_indicators", "appointments", "package_change_requests"} <= set(db.metadata.tables)
         assert "exam_registrations" not in db.metadata.tables
         assert "health_records" not in db.metadata.tables
         assert "health_indicators" not in db.metadata.tables
@@ -38,7 +38,7 @@ def test_rebuild_preserves_only_admin_identity_and_password(tmp_path):
     backup = rebuild_database(path)
     assert backup and backup.exists()
     connection = sqlite3.connect(path)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
     assert connection.execute("SELECT id, username, password_hash FROM users").fetchall() == [(7, "admin", "unchanged-hash")]
     assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     connection.close()
@@ -77,14 +77,14 @@ def test_demo_seed_has_rich_timelines_and_complete_role_matrix(app):
             ).count() >= 2
 
 
-def test_v4_upgrade_preserves_all_current_data(tmp_path):
+def test_v5_upgrade_preserves_all_current_data(tmp_path):
     from scripts.upgrade_local_database import rebuild_database
 
     path = tmp_path / "schema-v4.db"
     source = Path(__file__).resolve().parents[1] / "instance" / "health_system.db"
     shutil.copy2(source, path)
     connection = sqlite3.connect(path)
-    connection.execute("PRAGMA user_version=4")
+    connection.execute("PRAGMA user_version=5")
     connection.commit()
     connection.close()
 
@@ -93,7 +93,9 @@ def test_v4_upgrade_preserves_all_current_data(tmp_path):
     assert backup and backup.exists()
     connection = sqlite3.connect(path)
     try:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert connection.execute("SELECT COUNT(*) FROM appointments").fetchone()[0] == 25
+        assert connection.execute("SELECT COUNT(*) FROM package_change_requests").fetchone()[0] == 4
         assert connection.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 13
         assert connection.execute("SELECT COUNT(*) FROM institution_reports").fetchone()[0] == 11
         assert connection.execute("SELECT COUNT(*) FROM institution_reports WHERE status='published'").fetchone()[0] == 11

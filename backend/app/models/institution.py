@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from app.extensions import db
@@ -24,6 +25,7 @@ class Institution(db.Model):
     closed_day = db.Column(db.String(20), nullable=True)
     description = db.Column(db.Text, nullable=True)
     logo_url = db.Column(db.String(255), nullable=True)
+    daily_appointment_limit = db.Column(db.Integer, nullable=True)
     is_active = db.Column(
         db.Boolean,
         nullable=False,
@@ -48,6 +50,10 @@ class Institution(db.Model):
         back_populates="institution",
         cascade="all, delete-orphan",
         order_by="InstitutionImage.sort_order.asc()",
+    )
+    appointments = db.relationship("Appointment", back_populates="institution")
+    package_change_requests = db.relationship(
+        "PackageChangeRequest", back_populates="institution", cascade="all, delete-orphan"
     )
 
     @property
@@ -76,6 +82,7 @@ class Institution(db.Model):
             "cover_image_url": cover_image_url,
             "images": image_items,
             "is_active": self.is_active,
+            "daily_appointment_limit": self.daily_appointment_limit,
             "package_count": active_package_count,
             "total_package_count": len(self.packages),
         }
@@ -106,6 +113,8 @@ class Package(db.Model):
     )
 
     institution = db.relationship("Institution", back_populates="packages")
+    appointments = db.relationship("Appointment", back_populates="package")
+    change_requests = db.relationship("PackageChangeRequest", back_populates="package")
 
     def to_dict(self):
         return {
@@ -117,4 +126,127 @@ class Package(db.Model):
             "price": float(self.price),
             "description": self.description,
             "is_active": self.is_active,
+        }
+
+
+def utc_now():
+    return datetime.now(timezone.utc)
+
+
+class Appointment(db.Model):
+    __tablename__ = "appointments"
+    __table_args__ = (
+        db.CheckConstraint(
+            "status in ('unfulfilled', 'awaiting_report', 'fulfilled', 'invalidated', 'cancelled')",
+            name="ck_appointments_status",
+        ),
+        db.UniqueConstraint("user_id", "active_date_key", name="uq_appointments_user_active_date"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    institution_id = db.Column(db.Integer, db.ForeignKey("institutions.id"), nullable=False, index=True)
+    package_id = db.Column(db.Integer, db.ForeignKey("packages.id", ondelete="SET NULL"), nullable=True, index=True)
+    appointment_date = db.Column(db.Date, nullable=False, index=True)
+    active_date_key = db.Column(db.Date, nullable=True)
+    status = db.Column(db.String(24), nullable=False, default="unfulfilled", index=True)
+    user_name_snapshot = db.Column(db.String(80), nullable=False)
+    user_health_id_snapshot = db.Column(db.String(20), nullable=False)
+    package_name_snapshot = db.Column(db.String(120), nullable=False)
+    package_price_snapshot = db.Column(db.Numeric(10, 2), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    cancelled_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    attended_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    invalidated_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    fulfilled_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    user = db.relationship("User", foreign_keys=[user_id])
+    institution = db.relationship("Institution", back_populates="appointments")
+    package = db.relationship("Package", back_populates="appointments")
+    report = db.relationship("InstitutionReport", back_populates="appointment", uselist=False)
+
+    def to_dict(self, *, include_user=False):
+        payload = {
+            "id": self.id,
+            "institution_id": self.institution_id,
+            "package_id": self.package_id,
+            "appointment_date": self.appointment_date.isoformat(),
+            "status": self.status,
+            "package_name": self.package_name_snapshot,
+            "package_price": float(self.package_price_snapshot),
+            "institution": {
+                "id": self.institution.id,
+                "name": self.institution.name,
+                "branch_name": self.institution.branch_name,
+            } if self.institution else None,
+            "report_id": self.report.id if self.report else None,
+            "report_status": self.report.status if self.report else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "cancelled_at": self.cancelled_at.isoformat() if self.cancelled_at else None,
+            "attended_at": self.attended_at.isoformat() if self.attended_at else None,
+            "invalidated_at": self.invalidated_at.isoformat() if self.invalidated_at else None,
+            "fulfilled_at": self.fulfilled_at.isoformat() if self.fulfilled_at else None,
+        }
+        if include_user:
+            payload["user"] = {
+                "id": self.user_id,
+                "name": self.user_name_snapshot,
+                "health_id": self.user_health_id_snapshot,
+            }
+        return payload
+
+
+class PackageChangeRequest(db.Model):
+    __tablename__ = "package_change_requests"
+    __table_args__ = (
+        db.CheckConstraint(
+            "action in ('create', 'update', 'deactivate', 'reactivate')",
+            name="ck_package_change_requests_action",
+        ),
+        db.CheckConstraint(
+            "status in ('pending', 'approved', 'rejected', 'withdrawn')",
+            name="ck_package_change_requests_status",
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    institution_id = db.Column(db.Integer, db.ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False, index=True)
+    package_id = db.Column(db.Integer, db.ForeignKey("packages.id", ondelete="SET NULL"), nullable=True, index=True)
+    action = db.Column(db.String(20), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="pending", index=True)
+    before_data = db.Column(db.JSON, nullable=True)
+    proposed_data = db.Column(db.JSON, nullable=True)
+    requested_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    review_note = db.Column(db.String(500), nullable=True)
+    requested_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    reviewed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    withdrawn_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    institution = db.relationship("Institution", back_populates="package_change_requests")
+    package = db.relationship("Package", back_populates="change_requests")
+    requester = db.relationship("User", foreign_keys=[requested_by_user_id])
+    reviewer = db.relationship("User", foreign_keys=[reviewed_by_user_id])
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "institution_id": self.institution_id,
+            "institution": {
+                "id": self.institution.id,
+                "name": self.institution.name,
+                "branch_name": self.institution.branch_name,
+            } if self.institution else None,
+            "package_id": self.package_id,
+            "package_name": (self.proposed_data or {}).get("name") or (self.before_data or {}).get("name"),
+            "action": self.action,
+            "status": self.status,
+            "before_data": self.before_data,
+            "proposed_data": self.proposed_data,
+            "requester": self.requester.username if self.requester else None,
+            "reviewer": self.reviewer.username if self.reviewer else None,
+            "review_note": self.review_note,
+            "requested_at": self.requested_at.isoformat() if self.requested_at else None,
+            "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
+            "withdrawn_at": self.withdrawn_at.isoformat() if self.withdrawn_at else None,
         }

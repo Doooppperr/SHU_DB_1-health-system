@@ -1,6 +1,6 @@
 <template>
   <div class="workspace-page">
-    <section class="welcome-panel"><div><p>统一健康视图</p><h2>今天也要照顾好自己</h2><span>机构提交的体检报告与日常自测自动汇入同一条时间线。</span></div><div class="welcome-actions"><el-button type="primary" @click="router.push({name:'measurements'})">记录日常测量</el-button></div></section>
+    <section class="welcome-panel"><div><p>统一健康视图</p><h2>今天也要照顾好自己</h2><span>预约履约后的机构体检报告与日常自测自动汇入同一条时间线。</span></div><div class="welcome-actions"><el-button @click="router.push({name:'appointments'})">预约体检</el-button><el-button type="primary" @click="router.push({name:'measurements'})">记录日常测量</el-button></div></section>
     <el-alert v-if="errorMessage" :title="errorMessage" type="error" :closable="false" show-icon />
     <section class="metric-grid" v-loading="loading">
       <article v-for="item in metrics" :key="item.label" class="metric-card"><span class="metric-icon">{{ item.icon }}</span><div><small>{{ item.label }}</small><strong>{{ item.value }}</strong><p>{{ item.note }}</p></div></article>
