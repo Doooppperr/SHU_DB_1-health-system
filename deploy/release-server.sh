@@ -75,6 +75,30 @@ wait_for_database() {
     return 1
 }
 
+wait_for_database_connection() {
+    /opt/healthdoc/venv/bin/python - <<'PY'
+import os
+import time
+
+from sqlalchemy import create_engine, text
+
+
+engine = create_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
+try:
+    for attempt in range(120):
+        try:
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+            break
+        except Exception:
+            if attempt == 119:
+                raise
+            time.sleep(1)
+finally:
+    engine.dispose()
+PY
+}
+
 restore_database_backup() {
     if [[ -z "$database_backup" || ! -f "$database_backup" ]]; then
         return 0
@@ -118,6 +142,10 @@ if [[ -n "$demo_database" ]]; then
     set +a
     if [[ -z "${DATABASE_URL:-}" ]]; then
         echo "DATABASE_URL is missing from the server environment file." >&2
+        exit 1
+    fi
+    if ! wait_for_database_connection; then
+        echo "openGauss opened its port but did not accept SQL connections." >&2
         exit 1
     fi
     export TARGET_DATABASE_URL="$DATABASE_URL"
