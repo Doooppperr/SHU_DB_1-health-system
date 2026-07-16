@@ -18,6 +18,11 @@ def parse_datetime(value):
     return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
 
 
+def as_calendar_date(value):
+    """Normalize database DATE values across SQLite and openGauss dialects."""
+    return value.date() if isinstance(value, datetime) else value
+
+
 def requested_owner():
     raw = request.args.get("owner_id")
     if raw in {None, ""}:
@@ -111,7 +116,8 @@ def effective_points(owner_id, indicator_id, start_date=None, end_date=None):
     for indicator, report in report_query.order_by(InstitutionReport.exam_date.asc(), InstitutionReport.id.asc()).all():
         try: value = float(indicator.value)
         except (TypeError, ValueError): continue
-        points[report.exam_date] = {"date": report.exam_date.isoformat(), "value": value, "source": "institution_report", "report_id": report.id, "institution": report.institution.name if report.institution else None}
+        report_day = as_calendar_date(report.exam_date)
+        points[report_day] = {"date": report_day.isoformat(), "value": value, "source": "institution_report", "report_id": report.id, "institution": report.institution.name if report.institution else None}
     return [points[key] for key in sorted(points)]
 
 

@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 
 from app.extensions import db
+from app.health.routes import as_calendar_date
 from app.ai.rag import RetrievalResult
 from app.models import IndicatorDict, Institution, InstitutionReport, SelfMeasurement, User
 from app.services.record_files import report_file_path
@@ -95,6 +96,8 @@ def test_report_lock_rejects_unknown_identity_and_submit_rechecks_active_user(ap
 
 
 def test_self_measurement_trend_priority_withdraw_fallback(app, client):
+    assert as_calendar_date(datetime(2026, 7, 16, 8, 30)) == date(2026, 7, 16)
+    assert as_calendar_date(date(2026, 7, 16)) == date(2026, 7, 16)
     headers = login(client, "test1")
     with app.app_context():
         weight = IndicatorDict.query.filter_by(code="WEIGHT").first(); bmi = IndicatorDict.query.filter_by(code="BMI").first()
