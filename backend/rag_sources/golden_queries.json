@@ -36,6 +36,7 @@
     {"query":"谷草转氨酶结果应怎样参考标准？","audience":"authenticated","indicator_codes":["AST"],"expected_source_id":"nhc-liver-reference-intervals"},
 
     {"query":"怎样注册 HealthDoc 账号？","audience":"public","indicator_codes":[],"expected_source_id":"healthdoc-public-guide"},
+    {"query":"体检预约成功后会在健康时间线显示吗？","audience":"public","indicator_codes":[],"expected_source_id":"healthdoc-public-guide"},
     {"query":"机构提交体检报告后用户还需要登记吗？","audience":"public","indicator_codes":[],"expected_source_id":"healthdoc-public-guide"},
     {"query":"机构报告的 OCR 结果由谁确认？","audience":"public","indicator_codes":[],"expected_source_id":"healthdoc-public-guide"},
     {"query":"怎样授权亲友只读查看健康记录？","audience":"public","indicator_codes":[],"expected_source_id":"healthdoc-public-guide"},
