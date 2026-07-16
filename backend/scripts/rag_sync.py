@@ -113,7 +113,12 @@ def _extract_pdf(data: bytes) -> list[ExtractedSection]:
         # or during a user request.
         from rapidocr import RapidOCR
 
-        ocr = RapidOCR()
+        ocr = RapidOCR(
+            params={
+                "EngineConfig.onnxruntime.intra_op_num_threads": Config.RAG_EMBEDDING_THREADS,
+                "EngineConfig.onnxruntime.inter_op_num_threads": 1,
+            }
+        )
         for index, page in enumerate(document):
             pixmap = page.get_pixmap(matrix=fitz.Matrix(1, 1), alpha=False)
             result = ocr(pixmap.tobytes("png"))
