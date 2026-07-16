@@ -126,7 +126,29 @@ def test_friend_read_only_privacy_and_role_isolation(app, client):
     assert "health_id" not in serialized and "allergy_history" not in serialized and "subject_name_snapshot" not in serialized
     assert owner_name not in serialized
     friends = client.get("/api/friends", headers=viewer).get_json()
+    assert any(
+        relation["friend_user"]["username"] == "test2" and relation["auth_status"]
+        for relation in friends["outgoing"]
+    )
     assert "manageable" not in friends
+    with app.app_context():
+        weight_id = IndicatorDict.query.filter_by(code="WEIGHT").first().id
+        report_id = InstitutionReport.query.filter_by(
+            matched_user_id=owner_id,
+            status="published",
+        ).first().id
+    trend = client.get(
+        f"/api/health/trends/{weight_id}?owner_id={owner_id}", headers=viewer
+    )
+    assert trend.status_code == 200
+    assert trend.get_json()["owner"]["username"] == "test2"
+    report = client.get(f"/api/exam-reports/{report_id}", headers=viewer)
+    assert report.status_code == 200
+    assert report.get_json()["owner"]["username"] == "test2"
+    assert "subject_name_snapshot" not in report.get_json()["item"]
+    assert client.get(
+        f"/api/exam-reports/{report_id}", headers=login(client, "test3")
+    ).status_code == 403
     assert client.post("/api/self-measurements", headers=login(client, "institution1_staff1"), json={}).status_code == 403
     assert client.get("/api/health/timeline", headers=login(client, "admin", "admin123")).status_code == 403
 

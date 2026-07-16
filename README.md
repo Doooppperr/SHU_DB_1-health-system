@@ -213,7 +213,7 @@ npm run build
 npm audit --omit=dev
 ```
 
-当前验收基线：后端 25 项、前端 14 个文件 79 项通过；Vite production build、Python/npm 依赖审计、44 条 RAG 黄金查询、SQLite 完整性/外键与全量快照迁移冒烟均通过。
+当前验收基线：后端 25 项、前端 15 个文件 81 项通过；Vite production build、Python/npm 依赖审计、44 条 RAG 黄金查询、SQLite 完整性/外键与全量快照迁移冒烟均通过。
 
 ## 备份
 
