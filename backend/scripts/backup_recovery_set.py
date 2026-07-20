@@ -40,7 +40,7 @@ def create_recovery_set(database, upload_dir, output):
             actual_hash = digest(path)
             if expected_hash != actual_hash or path.stat().st_size != expected_size: raise RuntimeError(f"asset checksum mismatch: {key}")
             assets.append({"storage_key": key, "sha256": actual_hash, "byte_size": expected_size})
-        manifest = {"schema_version": 7, "created_at": datetime.now(timezone.utc).isoformat(),
+        manifest = {"schema_version": 8, "created_at": datetime.now(timezone.utc).isoformat(),
                     "database": {"name": "health_system.db", "sha256": digest(snapshot), "byte_size": snapshot.stat().st_size},
                     "assets": assets}
         with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -53,7 +53,7 @@ def create_recovery_set(database, upload_dir, output):
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument("--database", type=Path, default=BACKEND_DIR / "instance" / "health_system.db")
     parser.add_argument("--upload-dir", type=Path, default=BACKEND_DIR / "uploads"); parser.add_argument("--output", type=Path)
-    args = parser.parse_args(); output = args.output or BACKEND_DIR / "instance" / f"healthdoc-recovery-v7-{datetime.now():%Y%m%d-%H%M%S}.zip"
+    args = parser.parse_args(); output = args.output or BACKEND_DIR / "instance" / f"healthdoc-recovery-v8-{datetime.now():%Y%m%d-%H%M%S}.zip"
     manifest = create_recovery_set(args.database, args.upload_dir, output)
     print(f"output={output.resolve()} assets={len(manifest['assets'])} database_sha256={manifest['database']['sha256']}")
 

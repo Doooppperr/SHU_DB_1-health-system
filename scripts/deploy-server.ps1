@@ -24,6 +24,8 @@ $remoteDemoAssets = "/home/$SshUser/$demoAssetsName"
 $mailSettingsName = "healthdoc-mail-$releaseId.env"
 $mailSettingsPath = Join-Path ([System.IO.Path]::GetTempPath()) $mailSettingsName
 $remoteMailSettings = "/home/$SshUser/$mailSettingsName"
+$releaseStageRoot = Join-Path ([System.IO.Path]::GetTempPath()) "healthdoc-release-stage-$releaseId"
+$frontendBuildPath = Join-Path $releaseStageRoot "frontend\dist"
 
 function Assert-LastExitCode([string]$Step) {
     if ($LASTEXITCODE -ne 0) {
@@ -48,7 +50,7 @@ try {
         try {
             npm audit --omit=dev
             Assert-LastExitCode "Frontend production dependency audit"
-            npm test
+            npm test -- --configLoader runner
             Assert-LastExitCode "Frontend tests"
         }
         finally {
@@ -58,7 +60,7 @@ try {
 
     Push-Location (Join-Path $projectRoot "frontend")
     try {
-        npm run build
+        npm run build -- --configLoader runner --outDir $frontendBuildPath --emptyOutDir
         Assert-LastExitCode "Frontend build"
     }
     finally {
@@ -76,7 +78,8 @@ try {
             --exclude="backend/.pytest_cache" `
             --exclude="*/__pycache__" `
             --exclude="*.pyc" `
-            backend deploy frontend/dist
+            backend deploy `
+            -C $releaseStageRoot frontend/dist
         Assert-LastExitCode "Release packaging"
     }
     finally {
@@ -120,8 +123,8 @@ finally:
 
         $uploadsRoot = Join-Path $projectRoot "backend\uploads"
         $requiredDemoAssetDirectories = @(
-            (Join-Path $uploadsRoot "institutions\demo-v7"),
-            (Join-Path $uploadsRoot "health-assets\demo-v7")
+            (Join-Path $uploadsRoot "institutions\demo-v8"),
+            (Join-Path $uploadsRoot "health-assets\demo-v8")
         )
         foreach ($directory in $requiredDemoAssetDirectories) {
             if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
@@ -129,7 +132,7 @@ finally:
             }
         }
         Remove-Item -LiteralPath $demoAssetsPath -Force -ErrorAction SilentlyContinue
-        tar -czf $demoAssetsPath -C $uploadsRoot institutions/demo-v7 health-assets/demo-v7
+        tar -czf $demoAssetsPath -C $uploadsRoot institutions/demo-v8 health-assets/demo-v8
         Assert-LastExitCode "Demo asset packaging"
         scp $demoAssetsPath "${SshUser}@${Server}:$remoteDemoAssets"
         Assert-LastExitCode "Demo asset upload"
@@ -187,4 +190,5 @@ finally {
     Remove-Item -LiteralPath $demoSnapshotPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $demoAssetsPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $mailSettingsPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $releaseStageRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

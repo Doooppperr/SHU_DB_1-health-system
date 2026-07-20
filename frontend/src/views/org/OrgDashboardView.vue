@@ -3,7 +3,7 @@
     <section class="org-hero">
       <div>
         <p class="org-kicker">今日运营工作台</p>
-        <h2>{{ summary.institution?.name || "机构运营总览" }}</h2>
+        <h2>{{ summary.institution ? `${summary.institution.name} · ${summary.institution.branch_name}` : "机构运营总览" }}</h2>
         <p class="org-hero-copy">先处理到检与待归档任务，再检查服务容量和套餐审核进度。</p>
       </div>
       <div class="org-hero-actions">
@@ -47,7 +47,7 @@
           <li><span>2</span><div><strong>录入并复核检查结果</strong><small>可添加指标、文字结论和检查影像。</small></div></li>
           <li><span>3</span><div><strong>锁定并提交归档</strong><small>归档后成为用户的正式健康数据。</small></div></li>
         </ol>
-        <el-alert title="机构只能处理本机构预约，不可浏览用户个人测量或其他机构数据。" type="info" show-icon :closable="false" />
+        <el-alert title="当前分院只能处理本院预约；可在机构共享档案中只读查看同机构其他分院已归档的体检报告。" type="info" show-icon :closable="false" />
       </article>
     </section>
 

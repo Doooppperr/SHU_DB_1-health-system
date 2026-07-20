@@ -37,7 +37,10 @@ def role_error(user: User | None, *allowed_roles: str):
     if not user.is_active:
         return {"message": "account is inactive"}, 403
     if user.role == ROLE_INSTITUTION_ADMIN and (
-        user.managed_institution is None or not user.managed_institution.is_active
+        user.managed_institution is None
+        or not user.managed_institution.is_active
+        or user.managed_institution.organization is None
+        or not user.managed_institution.organization.is_active
     ):
         return {"message": "managed institution is inactive"}, 403
     return None

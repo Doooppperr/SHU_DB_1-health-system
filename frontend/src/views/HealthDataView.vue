@@ -2,11 +2,11 @@
   <div class="workspace-page user-platform-page">
     <section class="user-page-lead">
       <div>
-        <span class="user-kicker">我的健康资料</span>
-        <h2>每次检查，都有清楚的来源和日期</h2>
-        <p>按一次体检或一个自然日整理指标、结论和检查附件，回看时不再翻找零散记录。</p>
+        <span class="user-kicker">我的体检档案</span>
+        <h2>每次机构体检，都有清楚的来源和日期</h2>
+        <p>这里只整理机构正式归档的指标、结论和检查附件；个人测量请到健康趋势查看。</p>
       </div>
-      <el-button type="primary" @click="router.push({ name: 'dashboard', query: { quick: 'measurement' } })">记录今日测量</el-button>
+      <el-button type="primary" plain @click="router.push({ name: 'trends' })">查看健康趋势</el-button>
     </section>
 
     <el-card shadow="never" class="user-panel user-filter-panel">
@@ -47,9 +47,7 @@
             <span>{{ dateParts(item.business_date).month }}</span>
           </div>
           <div class="health-record-card__heading">
-            <el-tag :type="item.source_type === 'self' ? 'info' : 'success'" effect="light">
-              {{ item.source_type === "self" ? "本人记录" : "机构体检" }}
-            </el-tag>
+            <el-tag type="success" effect="light">机构体检</el-tag>
             <h3>{{ cardTitle(item) }}</h3>
             <p>{{ sourceLabel(item.source_type, item.source) }}</p>
           </div>
@@ -57,25 +55,25 @@
 
         <div class="health-record-card__domains">
           <span v-for="domain in item.domains" :key="domain.id">{{ domain.name }}</span>
-          <span v-if="!item.domains?.length">日常健康</span>
+          <span v-if="!item.domains?.length">综合体检</span>
         </div>
 
         <div class="health-record-card__counts">
           <div><strong>{{ item.indicator_count }}</strong><span>项指标</span></div>
-          <div v-if="item.source_type !== 'self'"><strong>{{ item.text_result_count }}</strong><span>条结论</span></div>
-          <div v-if="item.source_type !== 'self'"><strong>{{ item.asset_count }}</strong><span>个附件</span></div>
+          <div><strong>{{ item.text_result_count }}</strong><span>条结论</span></div>
+          <div><strong>{{ item.asset_count }}</strong><span>个附件</span></div>
         </div>
 
         <footer>
-          <span>{{ item.source_type === "self" ? "保留当天每次测量的时间和值" : "由机构确认后提供" }}</span>
+          <span>由体检分院确认并正式归档</span>
           <el-button type="primary" plain @click="openDetail(item)">查看详情</el-button>
         </footer>
       </article>
 
       <div v-if="!loading && !items.length" class="user-empty-state user-empty-state--page">
         <span class="user-empty-state__icon">档</span>
-        <div><strong>没有找到符合条件的健康资料</strong><p>可以调整筛选条件，或记录一次今日测量。</p></div>
-        <el-button type="primary" plain @click="router.push({ name: 'dashboard', query: { quick: 'measurement' } })">记录测量</el-button>
+        <div><strong>没有找到符合条件的体检数据</strong><p>可以调整筛选条件，或前往体检机构预约新的服务。</p></div>
+        <el-button type="primary" plain @click="router.push({ name: 'institutions' })">查看体检机构</el-button>
       </div>
     </section>
 
@@ -137,7 +135,6 @@ function dateParts(value) {
 }
 
 function cardTitle(item) {
-  if (item.source_type === "self") return "当天的日常测量";
   return item.package?.name || "体检健康数据";
 }
 

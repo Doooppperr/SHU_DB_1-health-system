@@ -47,6 +47,8 @@ export function deleteOrgImage(imageId) {
 export const fetchOrgReports = (params = {}) => http.get("/org/reports", { params });
 export const createOrgReport = (payload) => http.post("/org/reports", payload);
 export const fetchOrgReport = (id) => http.get(`/org/reports/${id}`);
+export const fetchOrgContext = () => http.get("/org/context");
+export const fetchOrgReportAssetContent = (id, assetId) => http.get(`/org/reports/${id}/assets/${assetId}/content`, { responseType: "blob" });
 export const updateOrgReport = (id, payload) => http.put(`/org/reports/${id}`, payload);
 export const addOrgReportIndicator = (id, payload) => http.post(`/org/reports/${id}/indicators`, payload);
 export const updateOrgReportIndicator = (id, indicatorId, payload) => http.put(`/org/reports/${id}/indicators/${indicatorId}`, payload);

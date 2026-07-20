@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.admin import admin_bp
 from app.extensions import db
-from app.models import Comment, Institution, InstitutionInvite, Package, PackageChangeRequest, User
+from app.models import Comment, Institution, InstitutionInvite, Organization, Package, PackageChangeRequest, User
 from app.services.institution_management import (
     ManagementValidationError,
     apply_institution_payload,
@@ -30,6 +30,36 @@ def institution_payload(institution):
     payload["administrators"] = [item.to_dict(include_profile=False) for item in institution.administrators]
     payload["administrator_count"] = len(institution.administrators)
     return payload
+
+
+def organization_payload(organization, *, include_branches=False):
+    payload = organization.to_dict(include_branches=include_branches)
+    if include_branches:
+        payload["branches"] = [institution_payload(branch) for branch in organization.branches]
+    return payload
+
+
+def organization_or_error(organization_id):
+    item = db.session.get(Organization, organization_id)
+    return (item, None) if item else (None, ({"message": "organization not found"}, 404))
+
+
+def apply_organization_payload(item, payload, *, creating=False):
+    if not isinstance(payload, dict):
+        raise ManagementValidationError("request body must be an object")
+    if creating or "name" in payload:
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            raise ManagementValidationError("organization name is required")
+        item.name = name
+    if "description" in payload:
+        item.description = str(payload.get("description") or "").strip() or None
+    if "service_features" in payload:
+        features = payload.get("service_features")
+        if not isinstance(features, list) or any(not str(value).strip() for value in features):
+            raise ManagementValidationError("service_features must be a list of non-empty text values")
+        item.service_features = [str(value).strip() for value in features]
+    return item
 
 
 def invite_hash(code):
@@ -58,6 +88,7 @@ def dashboard():
             "regular_user_count": roles.get("user", 0),
             "institution_account_count": roles.get("institution_admin", 0),
             "institution_count": institution_count,
+            "organization_count": Organization.query.count(),
             "active_institution_count": Institution.query.filter_by(is_active=True).count(),
             "pending_comment_count": Comment.query.filter_by(is_visible=False).count(),
             "pending_package_review_count": PackageChangeRequest.query.filter_by(status="pending").count(),
@@ -68,11 +99,11 @@ def dashboard():
 @admin_bp.get("/institutions")
 @roles_required(ROLE_ADMIN)
 def list_institutions():
-    query = Institution.query
+    query = Institution.query.join(Institution.organization)
     keyword = (request.args.get("keyword") or "").strip()
     if keyword:
         pattern = f"%{keyword}%"
-        query = query.filter(or_(Institution.name.ilike(pattern), Institution.branch_name.ilike(pattern), Institution.district.ilike(pattern)))
+        query = query.filter(or_(Organization.name.ilike(pattern), Institution.branch_name.ilike(pattern), Institution.district.ilike(pattern)))
     active = (request.args.get("is_active") or "").lower()
     if active in {"true", "1"}:
         query = query.filter_by(is_active=True)
@@ -84,9 +115,17 @@ def list_institutions():
 @admin_bp.post("/institutions")
 @roles_required(ROLE_ADMIN)
 def create_institution():
-    item = Institution()
+    payload = request.get_json(silent=True) or {}
     try:
-        apply_institution_payload(item, request.get_json(silent=True) or {}, creating=True)
+        organization_id = int(payload.get("organization_id"))
+    except (TypeError, ValueError):
+        return {"message": "organization_id is required"}, 400
+    organization = db.session.get(Organization, organization_id)
+    if organization is None:
+        return {"message": "organization not found"}, 404
+    item = Institution(organization_id=organization.id, name=organization.name)
+    try:
+        apply_institution_payload(item, payload, creating=True)
         db.session.add(item)
         db.session.commit()
     except ManagementValidationError as exc:
@@ -95,6 +134,91 @@ def create_institution():
     except IntegrityError:
         db.session.rollback()
         return {"message": "institution branch already exists"}, 409
+    return {"item": institution_payload(item)}, 201
+
+
+@admin_bp.get("/organizations")
+@roles_required(ROLE_ADMIN)
+def list_organizations():
+    return {"items": [organization_payload(item, include_branches=True) for item in Organization.query.order_by(Organization.id).all()]}, 200
+
+
+@admin_bp.post("/organizations")
+@roles_required(ROLE_ADMIN)
+def create_organization():
+    item = Organization()
+    try:
+        apply_organization_payload(item, request.get_json(silent=True) or {}, creating=True)
+        db.session.add(item)
+        db.session.commit()
+    except ManagementValidationError as exc:
+        db.session.rollback(); return {"message": str(exc)}, 400
+    except IntegrityError:
+        db.session.rollback(); return {"message": "organization already exists"}, 409
+    return {"item": organization_payload(item, include_branches=True)}, 201
+
+
+@admin_bp.get("/organizations/<int:organization_id>")
+@roles_required(ROLE_ADMIN)
+def get_organization(organization_id):
+    item, error = organization_or_error(organization_id)
+    return error if error else ({"item": organization_payload(item, include_branches=True)}, 200)
+
+
+@admin_bp.put("/organizations/<int:organization_id>")
+@roles_required(ROLE_ADMIN)
+def update_organization(organization_id):
+    item, error = organization_or_error(organization_id)
+    if error: return error
+    try:
+        apply_organization_payload(item, request.get_json(silent=True) or {})
+        for branch in item.branches:
+            branch.name = item.name
+        db.session.commit()
+    except ManagementValidationError as exc:
+        db.session.rollback(); return {"message": str(exc)}, 400
+    except IntegrityError:
+        db.session.rollback(); return {"message": "organization already exists"}, 409
+    return {"item": organization_payload(item, include_branches=True)}, 200
+
+
+@admin_bp.post("/organizations/<int:organization_id>/deactivate")
+@roles_required(ROLE_ADMIN)
+def deactivate_organization(organization_id):
+    item, error = organization_or_error(organization_id)
+    if error: return error
+    item.is_active = False
+    for branch in item.branches:
+        if branch.invite and branch.invite.status == "active":
+            branch.invite.status = "superseded"
+    db.session.commit()
+    return {"item": organization_payload(item, include_branches=True)}, 200
+
+
+@admin_bp.post("/organizations/<int:organization_id>/restore")
+@roles_required(ROLE_ADMIN)
+def restore_organization(organization_id):
+    item, error = organization_or_error(organization_id)
+    if error: return error
+    item.is_active = True
+    db.session.commit()
+    return {"item": organization_payload(item, include_branches=True)}, 200
+
+
+@admin_bp.post("/organizations/<int:organization_id>/branches")
+@roles_required(ROLE_ADMIN)
+def create_organization_branch(organization_id):
+    organization, error = organization_or_error(organization_id)
+    if error: return error
+    payload = request.get_json(silent=True) or {}
+    item = Institution(organization_id=organization.id, name=organization.name)
+    try:
+        apply_institution_payload(item, payload, creating=True)
+        db.session.add(item); db.session.commit()
+    except ManagementValidationError as exc:
+        db.session.rollback(); return {"message": str(exc)}, 400
+    except IntegrityError:
+        db.session.rollback(); return {"message": "branch already exists in this organization"}, 409
     return {"item": institution_payload(item)}, 201
 
 

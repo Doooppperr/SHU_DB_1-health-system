@@ -49,7 +49,7 @@ describe("institution platform views",()=>{
   it("organizes appointments by real service tasks and removes OCR jargon",async()=>{
     orgApi.fetchOrgAppointments.mockResolvedValue({data:{items:[{id:8,appointment_date:new Date().toISOString().slice(0,10),status:"awaiting_report",package_name:"都市年度基础体检",user:{name:"张明",health_id:"HD-001"},report_id:null,report_status:null}]}});
     const wrapper=mountView(OrgReportsView);await flushPromises();
-    expect(wrapper.text()).toContain("今日接待");expect(wrapper.text()).toContain("待归档");expect(wrapper.text()).toContain("历史健康数据");
+    expect(wrapper.text()).toContain("今日接待");expect(wrapper.text()).toContain("待归档");expect(wrapper.text()).toContain("本院归档");expect(wrapper.text()).toContain("机构共享档案");
     const archiveTab=wrapper.findAll(".report-tabs button").find((item)=>item.text().includes("待归档"));await archiveTab.trigger("click");await flushPromises();
     expect(wrapper.text()).toContain("都市年度基础体检");expect(wrapper.text()).toContain("导入体检报告并识别");expect(wrapper.text()).not.toContain("OCR 上传");
   });

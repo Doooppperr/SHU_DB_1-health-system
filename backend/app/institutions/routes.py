@@ -10,7 +10,10 @@ from app.services.institution_management import institution_payload
 @jwt_required()
 def list_institutions():
     institutions = (
-        Institution.query.filter(Institution.is_active.is_(True))
+        Institution.query.join(Institution.organization).filter(
+            Institution.is_active.is_(True),
+            Institution.organization.has(is_active=True),
+        )
         .order_by(Institution.id.asc())
         .all()
     )
@@ -21,7 +24,7 @@ def list_institutions():
 @jwt_required()
 def get_institution_detail(institution_id: int):
     institution = db.session.get(Institution, institution_id)
-    if institution is None or not institution.is_active:
+    if institution is None or not institution.is_active or not institution.organization.is_active:
         return {"message": "institution not found"}, 404
 
     return {"item": institution_payload(institution)}, 200
@@ -31,7 +34,7 @@ def get_institution_detail(institution_id: int):
 @jwt_required()
 def list_packages(institution_id: int):
     institution = db.session.get(Institution, institution_id)
-    if institution is None or not institution.is_active:
+    if institution is None or not institution.is_active or not institution.organization.is_active:
         return {"message": "institution not found"}, 404
 
     packages = (
@@ -42,7 +45,8 @@ def list_packages(institution_id: int):
     return {
         "institution": {
             "id": institution.id,
-            "name": institution.name,
+            "organization_id": institution.organization_id,
+            "name": institution.organization.name,
             "branch_name": institution.branch_name,
         },
         "items": [item.to_dict() for item in packages],

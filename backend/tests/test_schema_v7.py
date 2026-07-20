@@ -3,7 +3,8 @@ from datetime import date, timedelta
 from app.extensions import db
 from app.models import (
     Appointment, FriendRelation, HealthDomain, IndicatorDict, Institution,
-    NotificationOutbox, Package, User, WaitlistSubscription,
+    InstitutionReport, NotificationOutbox, Package, ReportAccessLog, User,
+    WaitlistSubscription,
 )
 
 
@@ -29,12 +30,34 @@ def test_health_data_read_models_are_domain_based_and_paginated(app, client):
     assert listing.status_code == 200
     payload = listing.get_json()
     assert payload["pagination"]["page_size"] == 15
-    assert {item["source_type"] for item in payload["items"]} >= {"institution", "self"}
+    assert {item["source_type"] for item in payload["items"]} == {"institution"}
     detail = client.get(f"/api/health-data/{payload['items'][0]['health_data_id']}", headers=headers)
     assert detail.status_code == 200 and "sections" in detail.get_json()["item"]
     domain_id = domains.get_json()["items"][0]["id"]
     trend = client.get(f"/api/health-trends/{domain_id}", headers=headers)
     assert trend.status_code == 200 and "series_by_indicator" in trend.get_json()
+
+
+def test_same_organization_published_reports_are_read_only_and_audited(app, client):
+    sibling = login(client, "institution4_staff1")
+    other_organization = login(client, "institution2_staff1")
+    with app.app_context():
+        source = db.session.get(Institution, 1)
+        sibling_branch = db.session.get(Institution, 4)
+        assert source.organization_id == sibling_branch.organization_id
+        report = InstitutionReport.query.filter_by(institution_id=source.id, status="published").first()
+        report_id = report.id
+    listing = client.get("/api/org/reports?scope=organization", headers=sibling)
+    assert listing.status_code == 200
+    shared = next(item for item in listing.get_json()["items"] if item["id"] == report_id)
+    assert shared["access_mode"] == "cross_branch_read_only" and shared["can_edit"] is False
+    detail = client.get(f"/api/org/reports/{report_id}", headers=sibling)
+    assert detail.status_code == 200
+    assert detail.get_json()["item"]["access_mode"] == "cross_branch_read_only"
+    assert client.put(f"/api/org/reports/{report_id}", headers=sibling, json={"subject_name": "禁止修改"}).status_code == 404
+    assert client.get(f"/api/org/reports/{report_id}", headers=other_organization).status_code == 404
+    with app.app_context():
+        assert ReportAccessLog.query.filter_by(report_id=report_id, access_type="detail").count() >= 1
 
 
 def test_booking_group_is_atomic_and_proxy_booking_is_separate(app, client):

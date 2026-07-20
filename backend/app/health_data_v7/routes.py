@@ -112,22 +112,6 @@ def health_data_list():
                         "package": {"id": report.package_id, "name": report.package.name} if report.package else None,
                         "domains": [row.to_dict() for row in domain_rows], "indicator_count": len(report.indicators),
                         "text_result_count": len(report.text_results), "asset_count": len(report.assets)})
-    if not institution_id:
-        measurements = SelfMeasurement.query.filter_by(user_id=owner.id)
-        if start: measurements = measurements.filter(SelfMeasurement.measured_at >= _day_bounds(start)[0])
-        if end: measurements = measurements.filter(SelfMeasurement.measured_at <= _day_bounds(end)[1])
-        grouped = defaultdict(list)
-        for row in measurements.order_by(SelfMeasurement.measured_at, SelfMeasurement.id).all():
-            linked_domains = {link.health_domain_id for link in row.indicator_dict.domain_links}
-            if domain_id and domain_id not in linked_domains: continue
-            grouped[_measurement_day(row.measured_at)].append(row)
-        for day, rows in grouped.items():
-            domain_ids = {link.health_domain_id for row in rows for link in row.indicator_dict.domain_links if link.is_primary}
-            domain_rows = HealthDomain.query.filter(HealthDomain.id.in_(domain_ids)).order_by(HealthDomain.sort_order).all() if domain_ids else []
-            records.append({"health_data_id": self_key(owner.id, day), "source_type": "self",
-                            "business_date": day.isoformat(), "source": {"id": None, "name": "个人自测", "branch_name": None},
-                            "package": None, "domains": [row.to_dict() for row in domain_rows],
-                            "indicator_count": len(rows), "text_result_count": 0, "asset_count": 0})
     records.sort(key=lambda row: (row["business_date"], row["health_data_id"]), reverse=True)
     page, size = _pagination(); total = len(records)
     return {"owner": owner.friend_identity_dict(), "items": records[(page - 1) * size:page * size],

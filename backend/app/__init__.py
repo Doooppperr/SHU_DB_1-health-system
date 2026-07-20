@@ -18,6 +18,7 @@ from .institutions import institutions_bp
 from .exam_reports import exam_reports_bp
 from .models import InstitutionImage
 from .org import org_bp
+from .organizations import organizations_bp
 from .profile import profile_bp
 from .schema import initialize_or_validate_schema
 from .seed import seed_core_data
@@ -55,6 +56,7 @@ def create_app(config_name="development"):
     app.register_blueprint(friends_bp, url_prefix="/api/friends")
     app.register_blueprint(institutions_bp, url_prefix="/api/institutions")
     app.register_blueprint(org_bp, url_prefix="/api/org")
+    app.register_blueprint(organizations_bp, url_prefix="/api/organizations")
     app.register_blueprint(indicators_bp, url_prefix="/api/indicators")
     app.register_blueprint(comments_bp, url_prefix="/api/comments")
 

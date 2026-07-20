@@ -1,4 +1,4 @@
-"""Safely replace the local schema-v7 demonstration snapshot.
+"""Safely replace the local schema-v8 demonstration snapshot.
 
 This command never runs as part of normal application startup.  It preserves
 all user rows and refuses to operate when non-demo personal or institution
@@ -43,7 +43,7 @@ DEFAULT_UPLOAD_DIR = BACKEND_DIR / "uploads"
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Replace local business demo records with the approved v7 scenario",
+        description="Replace local business demo records with the approved v8 scenario",
     )
     parser.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
     parser.add_argument("--upload-dir", type=Path, default=DEFAULT_UPLOAD_DIR)
@@ -86,7 +86,7 @@ def _backup(database: Path, upload_dir: Path) -> dict:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     suffix = hashlib.sha256(f"{database}-{stamp}".encode()).hexdigest()[:6]
     backup_database = database.with_name(
-        f"{database.stem}.before-demo-v7-{stamp}-{suffix}.db"
+        f"{database.stem}.before-demo-v8-{stamp}-{suffix}.db"
     )
     with closing(sqlite3.connect(f"file:{database.as_posix()}?mode=ro", uri=True)) as source:
         with closing(sqlite3.connect(backup_database)) as target:
@@ -95,14 +95,14 @@ def _backup(database: Path, upload_dir: Path) -> dict:
         raise RuntimeError("database backup is empty")
 
     upload_archive = database.with_name(
-        f"uploads.before-demo-v7-{stamp}-{suffix}.zip"
+        f"uploads.before-demo-v8-{stamp}-{suffix}.zip"
     )
     with zipfile.ZipFile(upload_archive, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         if upload_dir.is_dir():
             for path in sorted(upload_dir.rglob("*")):
                 if path.is_file():
                     archive.write(path, path.relative_to(upload_dir).as_posix())
-        archive.writestr("demo-v7-backup.json", json.dumps({
+        archive.writestr("demo-v8-backup.json", json.dumps({
             "database": str(database),
             "database_sha256": _sha256(backup_database),
             "upload_dir": str(upload_dir),
@@ -116,7 +116,7 @@ def _backup(database: Path, upload_dir: Path) -> dict:
 
 
 def _make_app(database: Path, upload_dir: Path) -> Flask:
-    app = Flask("healthdoc-demo-v7-reset")
+    app = Flask("healthdoc-demo-v8-reset")
     app.config.from_object(DevelopmentConfig)
     app.config.update(
         SQLALCHEMY_DATABASE_URI=f"sqlite:///{database.as_posix()}",
@@ -225,7 +225,7 @@ def main():
 
     upload_dir.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(
-        prefix="healthdoc-demo-v7-stage-", dir=upload_dir.parent,
+        prefix="healthdoc-demo-v8-stage-", dir=upload_dir.parent,
     ) as staging_name:
         staging_dir = Path(staging_name)
         app = _make_app(database, staging_dir)
@@ -241,8 +241,17 @@ def main():
             try:
                 result = rebuild_v7_demo_data(commit=False)
                 new_keys = _registered_storage_keys()
-                if account_identity_snapshot() != before_accounts:
-                    raise RuntimeError("pre-commit account identity verification failed")
+                after_accounts = account_identity_snapshot()
+                changed_accounts = sorted(
+                    username
+                    for username, identity in before_accounts.items()
+                    if after_accounts.get(username) != identity
+                )
+                if changed_accounts:
+                    raise RuntimeError(
+                        "pre-commit account identity verification failed for preserved accounts: "
+                        + ", ".join(changed_accounts)
+                    )
                 attachment_manifest = _validate_staged_files(staging_dir, new_keys)
                 db.session.commit()
             except Exception:

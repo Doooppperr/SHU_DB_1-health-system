@@ -1,8 +1,8 @@
-"""Deterministic, human-oriented schema-v7 demonstration snapshot.
+"""Deterministic, human-oriented schema-v8 demonstration snapshot.
 
 The regular application startup only creates this snapshot for an empty local
 database.  Destructive replacement of an existing demo snapshot is exposed by
-``scripts/reset_v7_demo_data.py`` and guarded by strict account checks.
+``scripts/reset_v8_demo_data.py`` and guarded by strict account checks.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ from app.models import (
     InstitutionReport,
     NotificationDelivery,
     NotificationOutbox,
+    Organization,
     Package,
     PackageChangeRequest,
     PackageVersion,
@@ -42,6 +43,7 @@ from app.models import (
     ReportAssetAnnotation,
     ReportIndicator,
     ReportTextResult,
+    ReportAccessLog,
     SelfMeasurement,
     User,
     WaitlistSubscription,
@@ -50,14 +52,26 @@ from app.models import (
 
 
 DEMO_PASSWORD = "Shuhealthdoc！"
-DEMO_DATASET_VERSION = 3
+DEMO_DATASET_VERSION = 4
 DEMO_USERNAMES = tuple(f"test{index}" for index in range(1, 6))
-DEMO_STAFF_USERNAMES = tuple(
-    f"institution{institution}_staff{staff}"
-    for institution in range(1, 4)
-    for staff in range(1, 3)
+DEMO_STAFF_USERNAMES = (
+    *(f"institution{institution}_staff{staff}" for institution in range(1, 4) for staff in range(1, 3)),
+    *(f"institution{institution}_staff1" for institution in range(4, 16)),
 )
 REQUIRED_DEMO_USERNAMES = {"demo_admin", *DEMO_USERNAMES, *DEMO_STAFF_USERNAMES}
+LEGACY_DEMO_USERNAMES = {
+    "demo_admin", *DEMO_USERNAMES,
+    *(f"institution{institution}_staff{staff}" for institution in range(1, 4) for staff in range(1, 3)),
+}
+
+
+ORGANIZATION_SCENARIOS = (
+    {"name": "澄心健康管理中心", "description": "面向职场人和家庭成员的一站式年度体检与健康管理机构。", "service_features": ["家庭同行体检", "年度健康档案", "跨分院报告衔接"]},
+    {"name": "衡康代谢与慢病管理中心", "description": "聚焦糖脂代谢、肝胆健康与慢病风险连续管理。", "service_features": ["代谢专项", "慢病随访", "营养生活方式建议"]},
+    {"name": "云川影像与呼吸体检中心", "description": "提供呼吸功能、心电与循环影像检查的专业体检机构。", "service_features": ["呼吸功能", "心电影像", "职场体检"]},
+    {"name": "安沐女性与家庭健康中心", "description": "围绕女性不同生命阶段及家庭健康需要提供预约制体检服务。", "service_features": ["女性专项", "家庭健康", "分阶段评估"]},
+    {"name": "仁序职业健康与综合体检中心", "description": "服务企业员工与个人年度综合体检，重视流程效率与结果连续性。", "service_features": ["职业人群", "综合体检", "企业团队服务"]},
+)
 
 
 INSTITUTION_SCENARIOS = (
@@ -185,6 +199,78 @@ INSTITUTION_SCENARIOS = (
             },
         ),
     },
+)
+
+
+def _demo_package(name, focus, price, domains, audience):
+    return {
+        "name": name,
+        "focus_area": focus,
+        "price": price,
+        "audience": audience,
+        "description": f"围绕{focus}提供预约制检查，并按实际完成内容形成可持续查看的机构体检档案。",
+        "booking_notice": "请按预约时间提前15分钟到院；涉及采血时需空腹8—10小时，具体准备事项以分院通知为准。",
+        "domains": domains,
+    }
+
+
+def _demo_branch(name, branch_name, district, address, phone, packages):
+    return {
+        "name": name,
+        "branch_name": branch_name,
+        "district": district,
+        "address": address,
+        "metro_info": "地铁站步行约8分钟，预约成功后可查看详细到院指引",
+        "consult_phone": phone,
+        "closed_day": "周日休",
+        "description": f"{name}{branch_name}，提供独立预约与本院体检服务，并可衔接同机构其他分院的已归档报告。",
+        "daily_appointment_limit": 16,
+        "notification_email": f"branch-{district}@example.test",
+        "packages": packages,
+    }
+
+
+INSTITUTION_SCENARIOS += (
+    _demo_branch("澄心健康管理中心", "浦东陆家嘴院区", "浦东新区", "浦东南路855号健康中心4层", "021-58881201", (
+        _demo_package("陆家嘴职场轻体检", "基础体征与代谢风险筛查", "599.00", ("basic", "metabolic"), "工作节奏快、希望半日完成基础筛查的职场人"),
+    )),
+    _demo_branch("澄心健康管理中心", "闵行虹桥院区", "闵行区", "申长路988号虹桥健康楼2层", "021-54881102", (
+        _demo_package("家庭同行综合评估", "家庭成员年度综合健康评估", "1099.00", ("basic", "cardio", "metabolic", "renal"), "希望与家人同行完成年度体检的人群"),
+    )),
+    _demo_branch("衡康代谢与慢病管理中心", "普陀长寿路院区", "普陀区", "长寿路468号门诊楼3层", "021-62771103", (
+        _demo_package("体重与糖代谢跟踪", "体重、血糖与生活方式连续评估", "699.00", ("basic", "metabolic"), "正在进行体重或糖代谢管理的人群"),
+    )),
+    _demo_branch("衡康代谢与慢病管理中心", "长宁中山公园院区", "长宁区", "长宁路1027号健康楼5层", "021-62121104", (
+        _demo_package("血脂与循环联合筛查", "血脂代谢及循环风险评估", "899.00", ("metabolic", "cardio"), "关注血脂和心脑血管风险的人群"),
+    )),
+    _demo_branch("云川影像与呼吸体检中心", "虹口北外滩院区", "虹口区", "东大名路1089号医学影像楼", "021-65121105", (
+        _demo_package("北外滩呼吸影像专项", "呼吸功能与检查影像评估", "799.00", ("respiratory",), "关注肺功能或有长期呼吸道暴露的人群"),
+    )),
+    _demo_branch("云川影像与呼吸体检中心", "宝山大场院区", "宝山区", "沪太路1866号体检中心3层", "021-66521106", (
+        _demo_package("循环影像复查", "心电与循环影像复查", "899.00", ("cardio",), "已有既往心电或循环检查资料的人群"),
+    )),
+    _demo_branch("安沐女性与家庭健康中心", "黄浦院区", "黄浦区", "西藏南路518号安沐健康楼", "021-63281107", (
+        _demo_package("女性年度基础关怀", "女性年度基础与代谢评估", "799.00", ("basic", "metabolic", "other"), "关注年度基础健康的成年女性"),
+        _demo_package("女性心血管与代谢评估", "女性循环与代谢联合风险评估", "1099.00", ("cardio", "metabolic"), "关注血脂、血糖和循环风险的女性"),
+        _demo_package("家庭照护者健康评估", "家庭照护者综合健康评估", "1299.00", ("basic", "cardio", "digestive", "renal"), "长期承担家庭照护、需要系统体检的人群"),
+    )),
+    _demo_branch("安沐女性与家庭健康中心", "浦东张江院区", "浦东新区", "祖冲之路887号健康服务中心", "021-50801108", (
+        _demo_package("张江女性轻体检", "女性基础与消化健康筛查", "699.00", ("basic", "digestive", "other"), "希望半日完成基础检查的女性职场人"),
+    )),
+    _demo_branch("安沐女性与家庭健康中心", "嘉定新城院区", "嘉定区", "白银路399号家庭健康中心", "021-59521109", (
+        _demo_package("家庭女性综合评估", "女性与家庭多领域健康评估", "1199.00", ("basic", "metabolic", "renal", "other"), "需要家庭同行或长期健康档案的女性"),
+    )),
+    _demo_branch("仁序职业健康与综合体检中心", "松江院区", "松江区", "新松江路925号仁序健康楼", "021-57701110", (
+        _demo_package("职场年度标准体检", "职场人年度多领域筛查", "699.00", ("basic", "cardio", "metabolic", "digestive"), "18—60岁常规职场体检人群"),
+        _demo_package("高强度工作人群评估", "循环、代谢与消化联合评估", "999.00", ("cardio", "metabolic", "digestive"), "长期加班、饮食作息不规律的人群"),
+        _demo_package("企业骨干综合体检", "多领域综合健康风险评估", "1399.00", ("basic", "cardio", "metabolic", "respiratory", "renal"), "需要系统年度体检的企业骨干与管理人员"),
+    )),
+    _demo_branch("仁序职业健康与综合体检中心", "青浦徐泾院区", "青浦区", "诸光路1588号体检中心2层", "021-59761111", (
+        _demo_package("会展职场健康筛查", "基础、循环与呼吸健康筛查", "799.00", ("basic", "cardio", "respiratory"), "会展、差旅和高频沟通岗位从业者"),
+    )),
+    _demo_branch("仁序职业健康与综合体检中心", "奉贤南桥院区", "奉贤区", "南奉公路8500号健康管理楼", "021-67181112", (
+        _demo_package("产业员工综合体检", "职业人群基础与多系统评估", "899.00", ("basic", "cardio", "respiratory", "digestive"), "园区企业员工及长期站立作业人群"),
+    )),
 )
 
 
@@ -378,17 +464,53 @@ def _apply_institution_scenario(institution: Institution, scenario: dict) -> Non
     institution.is_active = True
 
 
+def _ensure_organizations() -> dict[str, Organization]:
+    rows = {item.name: item for item in Organization.query.all()}
+    for scenario in ORGANIZATION_SCENARIOS:
+        item = rows.get(scenario["name"])
+        if item is None:
+            item = Organization(name=scenario["name"])
+            db.session.add(item)
+            db.session.flush()
+            rows[item.name] = item
+        item.description = scenario["description"]
+        item.service_features = scenario["service_features"]
+        item.is_active = True
+    return rows
+
+
+def _ensure_demo_branches() -> list[Institution]:
+    organizations = _ensure_organizations()
+    rows = Institution.query.order_by(Institution.id).all()
+    if len(rows) not in {0, 3, 15}:
+        raise DemoResetSafetyError(f"expected 0, 3 or 15 demo branches, found {len(rows)}")
+    result = []
+    for index, scenario in enumerate(INSTITUTION_SCENARIOS):
+        organization = organizations[scenario["name"]]
+        if index < len(rows):
+            institution = rows[index]
+        else:
+            institution = Institution(
+                organization_id=organization.id,
+                name=organization.name,
+                branch_name=scenario["branch_name"],
+                district=scenario["district"],
+                address=scenario["address"],
+            )
+            db.session.add(institution)
+            db.session.flush()
+        institution.organization_id = organization.id
+        _apply_institution_scenario(institution, scenario)
+        result.append(institution)
+    db.session.flush()
+    return result
+
+
 def ensure_v7_demo_catalog() -> bool:
-    """Create the three-institution catalog only for a fresh database."""
+    """Create the five-organization, fifteen-branch catalog for a fresh database."""
     if Institution.query.first() is not None:
         return False
-    institutions = []
-    for scenario in INSTITUTION_SCENARIOS:
-        institution = Institution()
-        _apply_institution_scenario(institution, scenario)
-        db.session.add(institution)
-        db.session.flush()
-        institutions.append(institution)
+    institutions = _ensure_demo_branches()
     _create_catalog(institutions)
     db.session.commit()
     return True
@@ -401,31 +523,33 @@ def _create_demo_images(institutions: list[Institution]) -> None:
         ((39, 71, 119), (63, 117, 176), (224, 235, 247)),
         ((86, 58, 126), (123, 94, 165), (237, 229, 247)),
     )
-    for index, (institution, palette) in enumerate(zip(institutions, palettes), start=1):
-        for order, suffix in enumerate(("reception", "consultation")):
-            key = f"institutions/demo-v7/institution-{index}-{suffix}.png"
-            _write_png(upload_root / key, palette if order == 0 else tuple(reversed(palette)), 720, 405)
-            db.session.add(InstitutionImage(
-                institution_id=institution.id,
-                storage_key=key,
-                image_url=f"/uploads/{key}",
-                sort_order=order,
-            ))
+    for index, institution in enumerate(institutions, start=1):
+        palette = palettes[(index - 1) % len(palettes)]
+        key = f"institutions/demo-v8/branch-{index}-cover.png"
+        _write_png(upload_root / key, palette, 720, 405)
+        db.session.add(InstitutionImage(
+            institution_id=institution.id,
+            storage_key=key,
+            image_url=f"/uploads/{key}",
+            sort_order=0,
+        ))
 
 
-def ensure_v7_demo_accounts() -> bool:
+def ensure_v7_demo_accounts(*, commit: bool = True) -> bool:
     """Create fixed demo credentials without changing an existing account row."""
-    if User.query.filter_by(username="test1").first() is not None:
-        return False
-    institutions = Institution.query.order_by(Institution.id).limit(3).all()
-    if len(institutions) != 3:
-        raise RuntimeError("the v7 demo catalog must exist before demo accounts")
+    institutions = Institution.query.order_by(Institution.id).all()
+    if len(institutions) != 15:
+        raise RuntimeError("the schema v8 fifteen-branch catalog must exist before demo accounts")
     now = datetime.now(timezone.utc)
     shared_email = current_app.config.get("DEMO_SHARED_EMAIL") or "demo-shared@example.test"
-    demo_admin = User(username="demo_admin", role="admin", email=shared_email, email_verified_at=now)
-    demo_admin.set_password(DEMO_PASSWORD)
-    db.session.add(demo_admin)
+    changed = False
+    if User.query.filter_by(username="demo_admin").first() is None:
+        demo_admin = User(username="demo_admin", role="admin", email=shared_email, email_verified_at=now)
+        demo_admin.set_password(DEMO_PASSWORD)
+        db.session.add(demo_admin); changed = True
     for index, username in enumerate(DEMO_USERNAMES, start=1):
+        if User.query.filter_by(username=username).first() is not None:
+            continue
         name, birth_date, gender, allergy, history = PROFILE_SCENARIOS[username]
         user = User(
             username=username,
@@ -441,10 +565,13 @@ def ensure_v7_demo_accounts() -> bool:
             phone=f"138000000{index:02d}",
         )
         user.set_password(DEMO_PASSWORD)
-        db.session.add(user)
+        db.session.add(user); changed = True
     for institution_index, institution in enumerate(institutions, start=1):
-        for staff_index in (1, 2):
+        staff_indexes = (1, 2) if institution_index <= 3 else (1,)
+        for staff_index in staff_indexes:
             username = f"institution{institution_index}_staff{staff_index}"
+            if User.query.filter_by(username=username).first() is not None:
+                continue
             user = User(
                 username=username,
                 role="institution_admin",
@@ -453,9 +580,12 @@ def ensure_v7_demo_accounts() -> bool:
                 email_verified_at=now,
             )
             user.set_password(DEMO_PASSWORD)
-            db.session.add(user)
-    db.session.commit()
-    return True
+            db.session.add(user); changed = True
+    if commit:
+        db.session.commit()
+    else:
+        db.session.flush()
+    return changed
 
 
 def _update_demo_profiles() -> None:
@@ -532,7 +662,7 @@ def _create_booking_group(
     version = _package_version(package, version_number)
     domains = [row.domain.to_dict() for row in version.domains]
     group = BookingGroup(
-        group_code=f"BG-V7-{DEMO_DATASET_VERSION}-{institution.id}-{package.id}-{appointment_date:%Y%m%d}-{booker.id}",
+        group_code=f"BG-V8-{DEMO_DATASET_VERSION}-{institution.id}-{package.id}-{appointment_date:%Y%m%d}-{booker.id}",
         booked_by_user_id=booker.id,
         institution_id=institution.id,
         package_id=package.id,
@@ -689,7 +819,7 @@ def _create_report(
         ))
     if asset:
         domain_code, title, palette, annotation = asset
-        key = f"health-assets/demo-v7/report-{report.id}-{domain_code}.png"
+        key = f"health-assets/demo-v8/report-{report.id}-{domain_code}.png"
         raw = _write_png(Path(current_app.config["UPLOAD_DIR"]) / key, palette)
         row = ReportAsset(
             report_id=report.id,
@@ -778,6 +908,138 @@ def _create_imported_historical_report(
     return report
 
 
+def _add_synthetic_report_asset(report, staff, domain, sequence):
+    palettes = (
+        ((21, 96, 91), (60, 150, 139), (214, 241, 236)),
+        ((43, 78, 132), (86, 137, 190), (220, 235, 248)),
+        ((91, 58, 126), (145, 104, 171), (238, 226, 246)),
+    )
+    key = f"health-assets/demo-v8/report-{report.id}-{domain.code}.png"
+    raw = _write_png(Path(current_app.config["UPLOAD_DIR"]) / key, palettes[sequence % len(palettes)])
+    row = ReportAsset(
+        report_id=report.id,
+        health_domain_id=domain.id,
+        modality="synthetic_demo_image",
+        title=f"{domain.name}检查示意图（合成演示）",
+        storage_key=key,
+        mime_type="image/png",
+        byte_size=len(raw),
+        width=480,
+        height=270,
+        sha256=hashlib.sha256(raw).hexdigest(),
+        annotation_text="本附件仅用于演示跨分院只读查看，不包含真实患者信息。",
+        sort_order=0,
+        uploaded_by_user_id=staff.id,
+    )
+    db.session.add(row); db.session.flush()
+    db.session.add(ReportAssetAnnotation(
+        report_asset_id=row.id,
+        annotation_type="text",
+        text=row.annotation_text,
+        created_by_user_id=staff.id,
+    ))
+
+
+def _expand_v8_demo_data(users, institutions, packages, indicators, domains, today, now):
+    """Reach the fixed v8 demonstration scale with deterministic stories."""
+    testing = current_app.config.get("TESTING", False)
+    report_target = 15 if testing else 50
+    asset_target = 4 if testing else 15
+    group_target = BookingGroup.query.count() if testing else 40
+    appointment_target = Appointment.query.count() if testing else 56
+    measurement_target = max(SelfMeasurement.query.count(), 70) if testing else 120
+    domain_indicator = {
+        "basic": ("WEIGHT", "72.0"),
+        "cardio": ("HR", "76"),
+        "metabolic": ("FBG", "5.4"),
+        "digestive": ("ALT", "25"),
+        "respiratory": ("SPO2", "97"),
+        "renal": ("CREA", "78"),
+        "hematology": ("HR", "74"),
+        "other": ("WEIGHT", "61.0"),
+    }
+    staff_by_branch = {
+        index: users[f"institution{index}_staff1"]
+        for index in range(1, len(institutions) + 1)
+    }
+    package_by_branch = {index: sorted(branch.packages, key=lambda item: item.id)[0] for index, branch in enumerate(institutions, start=1)}
+    sequence = 0
+    while InstitutionReport.query.count() < report_target:
+        branch_index = sequence % len(institutions) + 1
+        user = users[DEMO_USERNAMES[sequence % len(DEMO_USERNAMES)]]
+        package = package_by_branch[branch_index]
+        version = _package_version(package)
+        domain = sorted(version.domains, key=lambda item: item.sort_order)[0].domain
+        indicator_code, value = domain_indicator[domain.code]
+        report = _create_imported_historical_report(
+            user=user,
+            institution=institutions[branch_index - 1],
+            package=package,
+            staff=staff_by_branch[branch_index],
+            exam_date=today - timedelta(days=760 + sequence * 9),
+            indicators=indicators,
+            domains=domains,
+            values=((indicator_code, value, domain.code, sequence % 9 == 0),),
+            title=f"{institutions[branch_index - 1].branch_name}历史体检摘要",
+            body="该合成记录用于演示同机构不同分院之间的已归档报告衔接，源分院继续保留内容责任。",
+        )
+        if ReportAsset.query.count() < asset_target:
+            _add_synthetic_report_asset(report, staff_by_branch[branch_index], domain, sequence)
+        sequence += 1
+
+    group_sequence = 0
+    while BookingGroup.query.count() < group_target:
+        groups_left = group_target - BookingGroup.query.count()
+        appointments_left = appointment_target - Appointment.query.count()
+        party_size = 2 if appointments_left > groups_left else 1
+        branch_index = group_sequence % len(institutions) + 1
+        participant_start = group_sequence % len(DEMO_USERNAMES)
+        participants = [
+            users[DEMO_USERNAMES[(participant_start + offset) % len(DEMO_USERNAMES)]]
+            for offset in range(party_size)
+        ]
+        _create_booking_group(
+            booker=participants[0],
+            participants=participants,
+            institution=institutions[branch_index - 1],
+            package=package_by_branch[branch_index],
+            appointment_date=today - timedelta(days=260 + group_sequence),
+            status="cancelled" if group_sequence % 2 == 0 else "invalidated",
+            created_at=now - timedelta(days=300 + group_sequence),
+        )
+        group_sequence += 1
+
+    measurement_sequence = 0
+    measurement_indicators = ("WEIGHT", "HR", "FBG", "SPO2", "TEMP")
+    while SelfMeasurement.query.count() < measurement_target:
+        username = DEMO_USERNAMES[measurement_sequence % len(DEMO_USERNAMES)]
+        code = measurement_indicators[measurement_sequence % len(measurement_indicators)]
+        base = {"WEIGHT": 65, "HR": 72, "FBG": 5.2, "SPO2": 98, "TEMP": 36.6}[code]
+        _add_measurement(
+            users[username], indicators[code], base + (measurement_sequence % 4) * 0.1,
+            _utc(today - timedelta(days=220 + measurement_sequence), 7 + measurement_sequence % 4),
+        )
+        measurement_sequence += 1
+
+    # Seed a few realistic audit rows without exposing report contents to the
+    # platform administrator. Every row represents an actual sibling branch.
+    for organization in Organization.query.order_by(Organization.id).all():
+        branches = [branch for branch in organization.branches if branch.is_active]
+        if len(branches) < 2:
+            continue
+        report = InstitutionReport.query.filter_by(institution_id=branches[0].id, status="published").first()
+        actor = User.query.filter_by(managed_institution_id=branches[1].id, role="institution_admin").first()
+        if report and actor:
+            db.session.add(ReportAccessLog(
+                actor_user_id=actor.id,
+                actor_institution_id=branches[1].id,
+                report_id=report.id,
+                source_institution_id=branches[0].id,
+                access_type="detail",
+                accessed_at=now - timedelta(days=organization.id),
+            ))
+
+
 def _seed_waitlists(users, institutions, packages, today, now):
     full_day = today + timedelta(days=14)
     db.session.add(AppointmentCapacitySlot(
@@ -846,7 +1108,7 @@ def _seed_waitlists(users, institutions, packages, today, now):
     ))
     outbox = NotificationOutbox(
         event_type="waitlist_available",
-        idempotency_key=f"demo-v7-waitlist-{notified.id}-revision-2",
+        idempotency_key=f"demo-v8-waitlist-{notified.id}-revision-2",
         recipient=users["test4"].email,
         payload={
             "message": "预约日期已有空位，请登录平台重新确认；本提醒不代表预约成功，也不会保留名额。",
@@ -865,7 +1127,7 @@ def _seed_waitlists(users, institutions, packages, today, now):
     db.session.add(NotificationDelivery(
         outbox_id=outbox.id,
         success=True,
-        provider_message_id="demo-v7-local-delivery",
+        provider_message_id="demo-v8-local-delivery",
         attempted_at=now - timedelta(hours=4),
     ))
 
@@ -963,15 +1225,15 @@ def _seed_package_reviews(users, institutions, packages, domains, now):
 
 
 def seed_v7_demo_experience(*, commit: bool = True) -> bool:
-    """Populate the realistic v7 snapshot when the business tables are empty."""
+    """Populate the realistic schema-v8 snapshot when business tables are empty."""
     if any(model.query.first() is not None for model in (Appointment, InstitutionReport, SelfMeasurement)):
         return False
-    institutions = Institution.query.order_by(Institution.id).limit(3).all()
-    if len(institutions) != 3 or Package.query.count() != 9:
-        raise RuntimeError("the three-institution, nine-package v7 catalog is required")
+    institutions = Institution.query.order_by(Institution.id).all()
+    if len(institutions) != 15 or Package.query.count() != 25:
+        raise RuntimeError("the five-organization, fifteen-branch, twenty-five-package v8 catalog is required")
     users = {item.username: item for item in User.query.filter(User.username.in_(REQUIRED_DEMO_USERNAMES)).all()}
     if set(users) != REQUIRED_DEMO_USERNAMES:
-        raise RuntimeError("all fixed v7 demo accounts are required")
+        raise RuntimeError("all fixed v8 demo accounts are required")
     from app.models import IndicatorDict
     indicators = {item.code: item for item in IndicatorDict.query.all()}
     domains = _domain_map()
@@ -1171,6 +1433,7 @@ def seed_v7_demo_experience(*, commit: bool = True) -> bool:
                 content="呼吸检查指引明确，希望后续增加更多可选时间段。", is_visible=False,
                 created_at=now - timedelta(days=5)),
     ])
+    _expand_v8_demo_data(users, institutions, packages, indicators, domains, today, now)
     if commit:
         db.session.commit()
     else:
@@ -1188,7 +1451,7 @@ def account_identity_snapshot() -> dict[str, tuple]:
 def validate_reset_target() -> None:
     users = User.query.order_by(User.id).all()
     names = {item.username for item in users}
-    missing = sorted(REQUIRED_DEMO_USERNAMES - names)
+    missing = sorted(LEGACY_DEMO_USERNAMES - names)
     if missing:
         raise DemoResetSafetyError(f"missing fixed demo accounts: {', '.join(missing)}")
     default_admin_username = os.getenv("DEFAULT_ADMIN_USERNAME", "admin").strip() or "admin"
@@ -1199,10 +1462,11 @@ def validate_reset_target() -> None:
             "refusing to erase business data while unknown accounts exist: " + ", ".join(unexpected_accounts)
         )
     institutions = Institution.query.order_by(Institution.id).all()
-    if len(institutions) != 3:
-        raise DemoResetSafetyError(f"expected exactly three demo institutions, found {len(institutions)}")
+    if len(institutions) not in {3, 15}:
+        raise DemoResetSafetyError(f"expected three legacy branches or fifteen v8 branches, found {len(institutions)}")
     for institution_index, institution in enumerate(institutions, start=1):
-        expected = {f"institution{institution_index}_staff1", f"institution{institution_index}_staff2"}
+        expected = ({f"institution{institution_index}_staff1", f"institution{institution_index}_staff2"}
+                    if institution_index <= 3 else {f"institution{institution_index}_staff1"})
         actual = {
             item.username for item in users
             if item.role == "institution_admin" and item.managed_institution_id == institution.id
@@ -1216,7 +1480,7 @@ def validate_reset_target() -> None:
 def _clear_demo_business_data() -> None:
     """Delete in FK-safe order while deliberately leaving every user row intact."""
     models = (
-        ReportAssetAnnotation, ReportAsset, ReportTextResult, ReportIndicator,
+        ReportAccessLog, ReportAssetAnnotation, ReportAsset, ReportTextResult, ReportIndicator,
         InstitutionReport, AppointmentEvent, NotificationDelivery, NotificationOutbox,
         AvailabilityNotificationEvent, WaitlistSubscriptionParticipant,
         WaitlistSubscription, Appointment, BookingGroup, AppointmentCapacitySlot,
@@ -1242,17 +1506,17 @@ def rebuild_v7_demo_data(*, commit: bool = True) -> dict:
     before = account_identity_snapshot()
     try:
         _clear_demo_business_data()
-        institutions = Institution.query.order_by(Institution.id).all()
-        for institution, scenario in zip(institutions, INSTITUTION_SCENARIOS):
-            _apply_institution_scenario(institution, scenario)
+        institutions = _ensure_demo_branches()
+        ensure_v7_demo_accounts(commit=False)
         _create_catalog(institutions)
         db.session.flush()
         seeded = seed_v7_demo_experience(commit=False)
         if not seeded:
-            raise RuntimeError("v7 demo experience was not rebuilt")
+            raise RuntimeError("v8 demo experience was not rebuilt")
         after = account_identity_snapshot()
-        if after != before:
-            raise DemoResetSafetyError("account identity changed during demo rebuild")
+        for username, snapshot in before.items():
+            if after.get(username) != snapshot:
+                raise DemoResetSafetyError(f"account identity changed during demo rebuild: {username}")
         if commit:
             db.session.commit()
         else:
@@ -1267,6 +1531,7 @@ def demo_snapshot_summary() -> dict:
     return {
         "target_dataset_version": DEMO_DATASET_VERSION,
         "users": User.query.count(),
+        "organizations": Organization.query.count(),
         "institutions": Institution.query.count(),
         "packages": Package.query.count(),
         "package_versions": PackageVersion.query.count(),

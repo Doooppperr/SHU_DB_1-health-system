@@ -1,6 +1,6 @@
 # 康康健健 HealthDoc 后端
 
-Flask 后端负责认证与三角色授权、领域化健康数据、多人预约、空位提醒、机构健康数据归档、私有附件、OCR 和健康 AI。本地使用 SQLite schema v7；服务器通过 `DATABASE_URL` 连接 GaussDB/openGauss，并使用 Alembic 增量迁移。
+Flask 后端负责认证与三角色授权、机构主体/分院协作、领域化体检数据、多人预约、空位提醒、私有附件、OCR 和健康 AI。本地使用 SQLite schema v8；服务器通过 `DATABASE_URL` 连接 GaussDB/openGauss，并使用 Alembic 增量迁移。
 
 ## 环境与安装
 
@@ -22,9 +22,9 @@ if (-not (Test-Path .env)) {
 
 根目录的 `scripts/start-full-dev.ps1` 和 `scripts/start-full-prod.ps1` 会在后端就绪后自动启动隐藏的常驻 worker，每 5 秒处理一次 Outbox，并在前端命令退出时停止。单独运行可使用 `scripts/start-notification-worker.ps1`，或在后端目录执行 `python scripts/notification_worker.py --watch --interval-seconds 5`。条件更新保证误开两个 worker 时同一条通知只会被一个进程领取；发送前会把 Outbox 载荷转换为连续的中文业务文本，不会把 JSON 原文发给用户。
 
-## 数据库与 schema v7
+## 数据库与 schema v8
 
-默认数据库为 `instance/health_system.db`。SQLite 连接启用外键；`PRAGMA user_version=7` 标识当前结构。新空库会直接创建 v7，v4–v6 使用升级脚本全量保留迁移；生产 openGauss/GaussDB 使用 `migrations/versions/20260720_schema_v7.py`。
+默认数据库为 `instance/health_system.db`。SQLite 连接启用外键；`PRAGMA user_version=8` 标识当前结构。新空库会直接创建 v8，v4–v7 使用升级脚本全量保留迁移；生产 openGauss/GaussDB 使用 `migrations/versions/20260720_schema_v8.py`，其下修订为 schema v7。
 
 ```powershell
 .\.venv\Scripts\python.exe .\scripts\upgrade_local_database.py --check-only
@@ -34,22 +34,22 @@ if (-not (Test-Path .env)) {
 演示业务数据可通过专用脚本重建；`--check-only` 只校验目标库和账号边界，`--apply --yes` 才会覆盖演示业务记录并保留全部演示账号及密码哈希：
 
 ```powershell
-.\.venv\Scripts\python.exe .\scripts\reset_v7_demo_data.py --check-only
-.\.venv\Scripts\python.exe .\scripts\reset_v7_demo_data.py --apply --yes
+.\.venv\Scripts\python.exe .\scripts\reset_v8_demo_data.py --check-only
+.\.venv\Scripts\python.exe .\scripts\reset_v8_demo_data.py --apply --yes
 ```
 
 升级与重建都会先校验完整性并生成时间戳备份。当前核心表包括：
 
-- 平台与授权：`users`、`friend_relations`、`institutions`、`packages`、`institution_invites`、`institution_images`、`comments`；
+- 平台与授权：`users`、`friend_relations`、`organizations`、`institutions`、`packages`、`institution_invites`、`institution_images`、`comments`；
 - 指标字典：`indicator_categories`、`indicator_dicts`；
-- 健康模型：`health_domains`、`indicator_domain_links`、`self_measurements`、`institution_reports`、`report_indicators`、`report_text_results`、`report_assets`；
+- 健康模型：`health_domains`、`indicator_domain_links`、`self_measurements`、`institution_reports`、`report_indicators`、`report_text_results`、`report_assets`、`report_access_logs`；
 - 套餐与预约：`package_versions`、`package_version_domains`、`booking_groups`、`appointments`、`appointment_events`、`appointment_capacity_slots`、`waitlist_subscriptions`、`waitlist_subscription_participants`；
 - 通知可靠性：`availability_notification_events`、`notification_outbox`。
 
 ## 角色与账号规则
 
 - `user`：必须有唯一 `health_id`，不能绑定机构。
-- `institution_admin`：必须绑定一个机构，不拥有健康身份码；同一机构可绑定多个账号。
+- `institution_admin`：必须绑定一个具体分院，不拥有健康身份码；账号无总部权限。本院报告可生产和归档，同机构兄弟分院已归档报告仅可查看并写入审计日志。
 - `admin`：不能绑定机构，也不拥有健康身份码。
 - `is_active=false` 后，登录、刷新令牌及所有角色保护接口立即拒绝账号。
 - 普通用户注册时健康身份码由服务端生成，前端不能指定或修改。
@@ -65,9 +65,11 @@ if (-not (Test-Path .env)) {
 | `/api/profile/me` | 普通用户 | 本人健康身份和个人健康资料 |
 | `/api/self-measurements` | 普通用户 | 总览测量抽屉使用的六类日常测量 CRUD |
 | `/api/health/dashboard` | 普通用户 | 今日测量、下一次体检、最新健康数据和最近时间线 |
-| `/api/health-data` | 普通用户 | 按自然日/单次体检组织的健康数据列表、详情和私有附件 |
+| `/api/health-data` | 普通用户 | 仅机构已归档体检报告列表、详情和私有附件；个人测量不进入此列表 |
 | `/api/health/timeline` | 普通用户 | `all/exam/self` 三种记录类型的统一时间线 |
 | `/api/health-trends/{domain_id}` | 普通用户 | 按健康领域和来源分轨的长期趋势 |
+| `/api/organizations` | 登录用户 | 机构主体及其分院的公开分组读模型 |
+| `/api/org/context` | 机构账号 | 当前机构主体、当前分院、兄弟分院和协作权限 |
 | `/api/friends` | 普通用户 | 亲友关系与授权状态 |
 | `/api/institutions` | 登录用户 | 启用机构、详情和套餐浏览 |
 | `/api/appointments`、`/api/booking-groups` | 普通用户 | 未来 30 天余量、1–5 人预约组与整组取消 |
@@ -137,7 +139,7 @@ draft ──lock──> locked ──submit + exact user identity──> publish
 
 RAG 仅索引 `rag_sources/manifest.json` 批准的公共知识，不索引用户问题、聊天、OCR 原文、用户 ID 或健康指标值。首次显式执行 `.\.venv\Scripts\python.exe scripts\rag_sync.py sync`，成功后再设置 `RAG_ENABLED=1`；应用启动和请求期间不联网更新语料。来源哈希变化会进入 quarantine，审核批准后才能切换索引。SSE 增加 `status.stage=retrieving`，只返回 `rag_used`、`retrieval_status` 和 `knowledge_source_count`，不向前端暴露来源正文或 URL。
 
-可分析对象为本人或已授权亲友的 `published` 机构报告。精确 `selected_record_ids` 与 `record_scope: {"owner_id": 2, "mode": "all_confirmed"}` 互斥，后者在 schema v7 中解析为该归属人的全部已发布报告；两种方式都必须逐请求同意并重新鉴权。
+可分析对象为本人或已授权亲友的 `published` 机构报告。精确 `selected_record_ids` 与 `record_scope: {"owner_id": 2, "mode": "all_confirmed"}` 互斥，后者在 schema v8 中解析为该归属人的全部已发布报告；两种方式都必须逐请求同意并重新鉴权。
 
 ## 报告识别导入（OCR）
 
@@ -183,7 +185,7 @@ Waitress 本机演示推荐从项目根目录运行：
 .\.venv\Scripts\python.exe -m pip check
 ```
 
-当前 52 项测试使用独立内存 SQLite，不修改 `instance/health_system.db`；覆盖 schema v7、SQLite/openGauss 结构校验、旧库全量保留升级、演示数据安全重建、健康领域、套餐版本、多人预约组、候补提醒、Outbox 常驻领取且不重复发送、连续中文邮件正文、报告指标/文字/附件、亲友只读边界、趋势与时间线、AI 同意、RAG 已核验缓存降级、识别导入临时文件删除及全量快照迁移。完整结论见 [`../项目文档/测试报告.md`](../项目文档/测试报告.md)。
+当前 53 项测试使用独立内存 SQLite，不修改 `instance/health_system.db`；覆盖 schema v8、SQLite/openGauss 结构校验、v7→v8 全量保留升级、机构主体与分院权限、跨院审计、演示数据安全重建、健康领域、套餐版本、多人预约组、候补提醒、Outbox 防重复与连续中文邮件、报告指标/文字/附件、亲友边界、趋势与时间线、AI 同意、RAG 降级和全量快照迁移。完整结论见 [`../项目文档/测试报告.md`](../项目文档/测试报告.md)。
 
 ## 生产数据库同步
 
@@ -194,4 +196,4 @@ Waitress 本机演示推荐从项目根目录运行：
   --source .\instance\health_system.db --target-url $env:TARGET_DATABASE_URL --replace
 ```
 
-脚本验证源库完整性与外键，创建完整目标 schema，复制全部表、重置生成序列并逐表核对行数。`--replace` 会清空目标应用表，只能在已备份且明确允许覆盖的演示环境使用；服务器演示发布入口为 `scripts/deploy-server.ps1 -SyncDemoDatabase -SyncMailSettings`，会同时同步 9 个合成附件并安装独立通知 worker 服务。
+脚本验证源库完整性与外键，创建完整目标 schema，复制全部表、重置生成序列并逐表核对行数。`--replace` 会清空目标应用表，只能在已备份且明确允许覆盖的演示环境使用；服务器演示发布入口为 `scripts/deploy-server.ps1 -SyncDemoDatabase`，会同步 30 个 demo-v8 合成素材并安装独立通知 worker 服务，同时保留服务器 SMTP 配置。

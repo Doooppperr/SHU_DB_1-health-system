@@ -1,5 +1,12 @@
 import http from "./http";
 
+export const fetchAdminOrganizations = () => http.get("/admin/organizations");
+export const createAdminOrganization = (payload) => http.post("/admin/organizations", payload);
+export const updateAdminOrganization = (id, payload) => http.put(`/admin/organizations/${id}`, payload);
+export const deactivateAdminOrganization = (id) => http.post(`/admin/organizations/${id}/deactivate`);
+export const restoreAdminOrganization = (id) => http.post(`/admin/organizations/${id}/restore`);
+export const createAdminOrganizationBranch = (id, payload) => http.post(`/admin/organizations/${id}/branches`, payload);
+
 export function fetchAdminInstitutions() {
   return http.get("/admin/institutions");
 }

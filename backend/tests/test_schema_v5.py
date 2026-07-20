@@ -15,8 +15,8 @@ from app.schema import CURRENT_SCHEMA_VERSION
 
 def test_schema_v7_uses_domains_booking_groups_and_private_health_assets(app):
     with app.app_context():
-        assert CURRENT_SCHEMA_VERSION == 7
-        assert {"self_measurements", "institution_reports", "report_indicators", "appointments", "package_change_requests"} <= set(db.metadata.tables)
+        assert CURRENT_SCHEMA_VERSION == 8
+        assert {"organizations", "report_access_logs", "self_measurements", "institution_reports", "report_indicators", "appointments", "package_change_requests"} <= set(db.metadata.tables)
         assert "exam_registrations" not in db.metadata.tables
         assert "health_records" not in db.metadata.tables
         assert "health_indicators" not in db.metadata.tables
@@ -95,7 +95,7 @@ def test_rebuild_preserves_only_admin_identity_and_password(tmp_path):
     backup = rebuild_database(path)
     assert backup and backup.exists()
     connection = sqlite3.connect(path)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
     assert connection.execute("SELECT id, username, password_hash FROM users").fetchall() == [(7, "admin", "unchanged-hash")]
     assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     connection.close()
@@ -121,11 +121,11 @@ def test_demo_seed_has_rich_timelines_and_complete_role_matrix(app):
         assert [user.username for user in people] == [
             "test1", "test2", "test3", "test4", "test5"
         ]
-        assert User.query.filter_by(role="institution_admin").count() == 6
+        assert User.query.filter_by(role="institution_admin").count() == 18
         assert User.query.filter_by(username="demo_admin", role="admin").count() == 1
-        assert Institution.query.count() == 3
-        assert Package.query.count() == 9
-        assert PackageVersion.query.count() == 10
+        assert Institution.query.count() == 15
+        assert Package.query.count() == 25
+        assert PackageVersion.query.count() == 26
         assert SelfMeasurement.query.count() >= 50
         assert InstitutionReport.query.filter_by(status="published").count() >= 6
         assert ReportIndicator.query.count() >= 20
@@ -161,7 +161,7 @@ def test_v5_upgrade_preserves_all_current_data(tmp_path):
     assert backup and backup.exists()
     connection = sqlite3.connect(path)
     try:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
         assert connection.execute("SELECT COUNT(*) FROM appointments").fetchone()[0] == expected_appointments
         assert connection.execute("SELECT COUNT(*) FROM package_change_requests").fetchone()[0] == expected_requests
         assert connection.execute("SELECT COUNT(*) FROM users").fetchone()[0] == expected_users

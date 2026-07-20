@@ -13,6 +13,7 @@ from .v7 import (
     ReportAssetAnnotation, ReportTextResult, WaitlistSubscription,
     WaitlistSubscriptionParticipant,
 )
+from .v8 import Organization, ReportAccessLog
 
 # Internal compatibility names for the existing AI reasoning layer only.  The
 # old health_records/health_indicators tables and public CRUD routes are gone.
@@ -20,13 +21,13 @@ HealthRecord = InstitutionReport
 HealthIndicator = ReportIndicator
 
 __all__ = [
-    "User", "Comment", "FriendRelation", "Institution", "InstitutionImage",
+    "User", "Comment", "FriendRelation", "Organization", "Institution", "InstitutionImage",
     "InstitutionInvite", "Package", "Appointment", "PackageChangeRequest", "IndicatorCategory", "IndicatorDict",
     "SelfMeasurement", "InstitutionReport", "ReportIndicator",
     "HealthDomain", "IndicatorDomainLink", "PackageVersion", "PackageVersionDomain",
     "BookingGroup", "AppointmentEvent", "AppointmentCapacitySlot",
     "WaitlistSubscription", "WaitlistSubscriptionParticipant",
     "AvailabilityNotificationEvent", "NotificationOutbox", "NotificationDelivery",
-    "ReportTextResult", "ReportAsset", "ReportAssetAnnotation",
+    "ReportTextResult", "ReportAsset", "ReportAssetAnnotation", "ReportAccessLog",
     "HealthRecord", "HealthIndicator",
 ]

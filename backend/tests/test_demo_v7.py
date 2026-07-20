@@ -9,7 +9,7 @@ from app.demo_v7 import (
 )
 from app.extensions import db
 from app.models import (
-    Appointment, BookingGroup, HealthDomain, Institution, InstitutionReport,
+    Appointment, BookingGroup, HealthDomain, Institution, InstitutionReport, Organization,
     NotificationOutbox, Package, PackageVersion, ReportAsset, ReportTextResult,
     User, WaitlistSubscription,
 )
@@ -34,14 +34,15 @@ EXPECTED_CATALOG = {
 }
 
 
-def test_v7_demo_catalog_and_platform_scenarios_are_visible(app):
+def test_v8_demo_catalog_and_platform_scenarios_are_visible(app):
     with app.app_context():
-        assert Institution.query.count() == 3
-        assert Package.query.count() == 9
-        assert PackageVersion.query.count() == 10
-        for institution in Institution.query.order_by(Institution.id).all():
+        assert Organization.query.count() == 5
+        assert Institution.query.count() == 15
+        assert Package.query.count() == 25
+        assert PackageVersion.query.count() == 26
+        assert all(len(item.images) == 1 for item in Institution.query.all())
+        for institution in Institution.query.order_by(Institution.id).limit(3).all():
             expected = EXPECTED_CATALOG[institution.name]
-            assert len(institution.images) == 2
             assert {item.name for item in institution.packages} == set(expected)
             for package in institution.packages:
                 version = db.session.get(PackageVersion, package.current_version_id)
@@ -76,16 +77,17 @@ def test_published_demo_results_stay_inside_booking_package_domains(app):
                 assert report.ocr_diagnostics["import_kind"] == "historical_paper_archive"
 
 
-def test_v7_demo_rebuild_preserves_every_account_identity_field(app):
+def test_v8_demo_rebuild_preserves_every_account_identity_field(app):
     with app.app_context():
         before = account_identity_snapshot()
         assert before
         result = rebuild_v7_demo_data()
         after = account_identity_snapshot()
         assert after == before
-        assert result["institutions"] == 3
-        assert result["packages"] == 9
-        assert result["package_versions"] == 10
+        assert result["organizations"] == 5
+        assert result["institutions"] == 15
+        assert result["packages"] == 25
+        assert result["package_versions"] == 26
         assert result["report_assets"] >= 3
         assert all(len(values) == len(ACCOUNT_IDENTITY_FIELDS) for values in after.values())
 

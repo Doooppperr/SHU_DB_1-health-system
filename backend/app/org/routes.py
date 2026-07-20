@@ -7,14 +7,14 @@ from pathlib import Path
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
-from flask import current_app, g, request
+from flask import current_app, g, request, send_file
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
 from app.models import (
     Appointment, AppointmentEvent, HealthDomain, IndicatorDict, Institution,
     InstitutionReport, Package, PackageChangeRequest, ReportAsset,
-    ReportIndicator, ReportTextResult, WaitlistSubscription,
+    ReportAccessLog, ReportIndicator, ReportTextResult, WaitlistSubscription,
 )
 from app.org import org_bp
 from app.services import get_ocr_provider, get_storage_backend
@@ -41,7 +41,7 @@ BUSINESS_TZ = ZoneInfo("Asia/Shanghai")
 
 def managed_institution():
     item = db.session.get(Institution, g.current_user.managed_institution_id)
-    if item is None or not item.is_active:
+    if item is None or not item.is_active or item.organization is None or not item.organization.is_active:
         return None, ({"message": "managed institution is unavailable"}, 403)
     return item, None
 
@@ -70,6 +70,50 @@ def scoped_report(report_id):
         return None, error
     report = InstitutionReport.query.filter_by(id=report_id, institution_id=institution.id).first()
     return (report, None) if report else (None, ({"message": "report not found"}, 404))
+
+
+def readable_report(report_id):
+    institution, error = managed_institution()
+    if error:
+        return None, None, error
+    report = db.session.get(InstitutionReport, report_id)
+    if report is None or report.institution is None:
+        return None, None, ({"message": "report not found"}, 404)
+    own_branch = report.institution_id == institution.id
+    same_organization = report.institution.organization_id == institution.organization_id
+    if not own_branch and (not same_organization or report.status != "published"):
+        return None, None, ({"message": "report not found"}, 404)
+    return report, own_branch, None
+
+
+def report_payload(report, current_institution, *, include_indicators=False):
+    payload = report.to_dict(include_indicators=include_indicators)
+    own_branch = report.institution_id == current_institution.id
+    payload.update({
+        "source_branch": {
+            "id": report.institution.id,
+            "organization_id": report.institution.organization_id,
+            "name": report.institution.organization.name,
+            "branch_name": report.institution.branch_name,
+        },
+        "access_mode": "editable" if own_branch else "cross_branch_read_only",
+        "can_edit": own_branch and report.status != "published",
+    })
+    return payload
+
+
+def log_cross_branch_access(report, access_type):
+    current = g.current_user.managed_institution
+    if report.institution_id == current.id:
+        return
+    db.session.add(ReportAccessLog(
+        actor_user_id=g.current_user.id,
+        actor_institution_id=current.id,
+        report_id=report.id,
+        source_institution_id=report.institution_id,
+        access_type=access_type,
+    ))
+    db.session.commit()
 
 
 def create_report_from_payload(payload, *, temporary_file_url=None, diagnostics=None):
@@ -161,6 +205,25 @@ def dashboard():
         },
         "tasks": tasks,
         "recent_package_reviews": [row.to_dict() for row in review_rows],
+    }}, 200
+
+
+@org_bp.get("/context")
+@roles_required(ROLE_INSTITUTION_ADMIN)
+def context():
+    institution, error = managed_institution()
+    if error: return error
+    return {"item": {
+        "organization": institution.organization.to_dict(),
+        "current_branch": institution_payload(institution),
+        "sibling_branches": [institution_payload(branch) for branch in institution.organization.branches if branch.id != institution.id and branch.is_active],
+        "permissions": {
+            "manage_current_branch": True,
+            "manage_sibling_branches": False,
+            "read_sibling_published_reports": True,
+            "read_sibling_drafts": False,
+            "read_sibling_appointments": False,
+        },
     }}, 200
 
 
@@ -407,10 +470,44 @@ def delete_image(image_id):
 def list_reports():
     institution, error = managed_institution()
     if error: return error
-    query = InstitutionReport.query.filter_by(institution_id=institution.id)
+    scope = (request.args.get("scope") or "branch").strip().lower()
+    if scope not in {"branch", "organization"}:
+        return {"message": "scope must be branch or organization"}, 400
+    if scope == "organization":
+        branch_ids = [branch.id for branch in institution.organization.branches]
+        query = InstitutionReport.query.filter(
+            InstitutionReport.institution_id.in_(branch_ids),
+            InstitutionReport.status == "published",
+        )
+    else:
+        query = InstitutionReport.query.filter_by(institution_id=institution.id)
     status = (request.args.get("status") or "").strip()
     if status: query = query.filter_by(status=status)
-    return {"items": [r.to_dict() for r in query.order_by(InstitutionReport.exam_date.desc(), InstitutionReport.id.desc()).all()]}, 200
+    source_branch_id = request.args.get("source_branch_id", type=int)
+    if source_branch_id:
+        allowed = {branch.id for branch in institution.organization.branches}
+        if source_branch_id not in allowed:
+            return {"message": "source branch is outside this organization"}, 403
+        query = query.filter(InstitutionReport.institution_id == source_branch_id)
+    subject = (request.args.get("subject") or "").strip()
+    if subject:
+        query = query.filter(db.or_(
+            InstitutionReport.subject_name_snapshot.ilike(f"%{subject}%"),
+            InstitutionReport.subject_health_id.ilike(f"%{subject}%"),
+        ))
+    start = parse_date(request.args.get("start_date")) if request.args.get("start_date") else None
+    end = parse_date(request.args.get("end_date")) if request.args.get("end_date") else None
+    if start: query = query.filter(InstitutionReport.exam_date >= start)
+    if end: query = query.filter(InstitutionReport.exam_date <= end)
+    domain_id = request.args.get("domain_id", type=int)
+    if domain_id:
+        query = query.filter(db.or_(
+            InstitutionReport.indicators.any(ReportIndicator.display_domain_id == domain_id),
+            InstitutionReport.text_results.any(health_domain_id=domain_id),
+            InstitutionReport.assets.any(health_domain_id=domain_id),
+        ))
+    rows = query.order_by(InstitutionReport.exam_date.desc(), InstitutionReport.id.desc()).all()
+    return {"scope": scope, "items": [report_payload(row, institution) for row in rows]}, 200
 
 
 @org_bp.post("/reports")
@@ -426,8 +523,26 @@ def create_report():
 @org_bp.get("/reports/<int:report_id>")
 @roles_required(ROLE_INSTITUTION_ADMIN)
 def get_report(report_id):
-    report, error = scoped_report(report_id)
-    return error if error else ({"item": report.to_dict(include_indicators=True)}, 200)
+    report, _own_branch, error = readable_report(report_id)
+    if error: return error
+    institution = g.current_user.managed_institution
+    log_cross_branch_access(report, "detail")
+    return {"item": report_payload(report, institution, include_indicators=True)}, 200
+
+
+@org_bp.get("/reports/<int:report_id>/assets/<int:asset_id>/content")
+@roles_required(ROLE_INSTITUTION_ADMIN)
+def get_report_asset_content(report_id, asset_id):
+    report, _own_branch, error = readable_report(report_id)
+    if error: return error
+    asset = ReportAsset.query.filter_by(id=asset_id, report_id=report.id).first()
+    if asset is None:
+        return {"message": "asset not found"}, 404
+    path = Path(current_app.config["UPLOAD_DIR"]) / asset.storage_key
+    if not path.is_file():
+        return {"message": "asset content unavailable"}, 404
+    log_cross_branch_access(report, "asset")
+    return send_file(path, mimetype=asset.mime_type, download_name=asset.title, conditional=True)
 
 
 @org_bp.put("/reports/<int:report_id>")

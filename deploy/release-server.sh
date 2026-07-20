@@ -198,9 +198,9 @@ if [[ -n "$demo_database" ]]; then
         exit 1
     fi
     unset TARGET_DATABASE_URL DATABASE_URL
-    unexpected_assets=$(tar -tzf "$demo_assets" | grep -Ev '^(institutions/demo-v7|health-assets/demo-v7)(/|/[^/]+\.png)?$' || true)
+    unexpected_assets=$(tar -tzf "$demo_assets" | grep -Ev '^(institutions/demo-v8|health-assets/demo-v8)(/|/[^/]+\.png)?$' || true)
     asset_count=$(tar -tzf "$demo_assets" | grep -Ec '\.png$' || true)
-    if [[ -n "$unexpected_assets" || "$asset_count" != "9" ]]; then
+    if [[ -n "$unexpected_assets" || "$asset_count" != "30" ]]; then
         echo "Demo asset archive contains an unexpected path; restoring the pre-release database." >&2
         restore_database_backup
         restore_uploads_backup
@@ -213,7 +213,7 @@ if [[ -n "$demo_database" ]]; then
     chown -R healthdoc:www-data /var/lib/healthdoc/uploads
     find /var/lib/healthdoc/uploads -type d -exec chmod 750 {} +
     find /var/lib/healthdoc/uploads -type f -exec chmod 640 {} +
-    test "$(find /var/lib/healthdoc/uploads -type f -name '*.png' | wc -l)" = "9"
+    test "$(find /var/lib/healthdoc/uploads -type f -name '*.png' | wc -l)" = "30"
     rm -f "$demo_database" "$demo_assets"
 fi
 

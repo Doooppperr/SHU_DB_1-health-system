@@ -8,7 +8,7 @@
     <el-alert v-if="errorMessage" :title="errorMessage" type="error" show-icon :closable="false" />
     <el-card shadow="never" class="form-card" v-loading="loading">
       <el-form :model="form" label-position="top" class="responsive-form-grid">
-        <el-form-item label="机构名称" required><el-input v-model="form.name" maxlength="120" /></el-form-item>
+        <el-form-item label="所属机构主体"><el-input :model-value="organizationName" disabled /></el-form-item>
         <el-form-item label="分院 / 门店名称" required><el-input v-model="form.branch_name" maxlength="120" /></el-form-item>
         <el-form-item label="所在区域" required><el-input v-model="form.district" maxlength="80" placeholder="例如：浦东新区" /></el-form-item>
         <el-form-item label="咨询电话"><el-input v-model="form.consult_phone" maxlength="30" /></el-form-item>
@@ -16,13 +16,13 @@
         <el-form-item label="交通信息" class="form-grid-full"><el-input v-model="form.metro_info" maxlength="255" placeholder="地铁、公交及停车提示" /></el-form-item>
         <el-form-item label="分机号"><el-input v-model="form.ext" maxlength="20" /></el-form-item>
         <el-form-item label="轮休日"><el-input v-model="form.closed_day" maxlength="20" placeholder="例如：周日" /></el-form-item>
-        <el-form-item label="机构简介" class="form-grid-full">
-          <el-input v-model="form.description" type="textarea" :rows="6" maxlength="2000" show-word-limit placeholder="介绍机构定位、服务特色与体检流程" />
+        <el-form-item label="分院简介" class="form-grid-full">
+          <el-input v-model="form.description" type="textarea" :rows="6" maxlength="2000" show-word-limit placeholder="介绍本分院的交通、服务特色与体检流程" />
         </el-form-item>
       </el-form>
     </el-card>
 
-    <el-alert title="权限说明" description="机构启用状态由系统管理员维护。机构管理员只能编辑自己绑定机构的公开资料。" type="info" show-icon :closable="false" />
+    <el-alert title="权限说明" description="机构主体和分院归属由系统管理员维护；当前账号只能编辑自己绑定分院的公开资料。" type="info" show-icon :closable="false" />
   </div>
 </template>
 
@@ -34,9 +34,11 @@ import { fetchOrgInstitution, updateOrgInstitution } from "../../api/org";
 const loading = ref(false);
 const saving = ref(false);
 const errorMessage = ref("");
-const form = reactive({ name: "", branch_name: "", district: "", address: "", metro_info: "", consult_phone: "", ext: "", closed_day: "", description: "" });
+const organizationName = ref("");
+const form = reactive({ branch_name: "", district: "", address: "", metro_info: "", consult_phone: "", ext: "", closed_day: "", description: "" });
 
 function assign(item = {}) {
+  organizationName.value = item.organization?.name || item.name || "";
   Object.keys(form).forEach((key) => { form[key] = item[key] ?? ""; });
 }
 async function load() {
@@ -51,8 +53,8 @@ async function load() {
   }
 }
 async function save() {
-  if (!form.name.trim() || !form.branch_name.trim() || !form.district.trim() || !form.address.trim()) {
-    ElMessage.error("请完整填写机构名称、分院、区域和地址");
+  if (!form.branch_name.trim() || !form.district.trim() || !form.address.trim()) {
+    ElMessage.error("请完整填写分院、区域和地址");
     return;
   }
   saving.value = true;

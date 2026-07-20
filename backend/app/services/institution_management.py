@@ -12,7 +12,6 @@ from app.services.storage import get_storage_backend
 
 
 INSTITUTION_FIELDS = {
-    "name",
     "branch_name",
     "address",
     "district",
@@ -22,7 +21,7 @@ INSTITUTION_FIELDS = {
     "closed_day",
     "description",
 }
-REQUIRED_INSTITUTION_FIELDS = {"name", "branch_name", "address", "district"}
+REQUIRED_INSTITUTION_FIELDS = {"branch_name", "address", "district"}
 PACKAGE_FIELDS = {"name", "focus_area", "gender_scope", "price", "description",
                   "package_type", "audience", "booking_notice"}
 VALID_GENDER_SCOPES = {"all", "male", "female", "female_all"}

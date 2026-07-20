@@ -241,7 +241,10 @@ def login():
     if not user.is_active:
         return {"message": "account is inactive"}, 403
     if user.role == "institution_admin" and (
-        user.managed_institution is None or not user.managed_institution.is_active
+        user.managed_institution is None
+        or not user.managed_institution.is_active
+        or user.managed_institution.organization is None
+        or not user.managed_institution.organization.is_active
     ):
         return {"message": "institution is inactive"}, 403
 

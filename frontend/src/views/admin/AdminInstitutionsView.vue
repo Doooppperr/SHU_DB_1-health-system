@@ -1,14 +1,14 @@
 <template>
   <div class="workspace-page">
     <section class="page-intro">
-      <div><p>全局机构治理</p><h2>机构与套餐管理</h2><span>停用操作保留历史报告、套餐、评论与图片，不执行物理删除。</span></div>
-      <el-button type="primary" @click="openCreate">新增机构</el-button>
+      <div><p>机构主体与分院治理</p><h2>机构与分院管理</h2><span>先建立机构主体，再添加分院；预约和套餐按分院隔离，归档报告在同机构内只读共享。</span></div>
+      <div><el-button @click="organizationDialogVisible=true">新增机构主体</el-button><el-button type="primary" @click="openCreate">新增分院</el-button></div>
     </section>
     <el-alert v-if="errorMessage" :title="errorMessage" type="error" show-icon :closable="false" />
     <el-card shadow="never" class="filter-card"><div class="filter-row"><label class="filter-field"><span class="filter-field-label">搜索机构</span><el-input v-model="keyword" clearable placeholder="机构名称、分院或区域" /></label><label class="filter-field filter-field--compact"><span class="filter-field-label">机构状态</span><el-select v-model="statusFilter"><el-option label="全部状态" value="all" /><el-option label="启用" value="active" /><el-option label="停用" value="inactive" /></el-select></label></div></el-card>
     <el-card shadow="never" class="table-card">
       <el-table :data="filteredItems" v-loading="loading" empty-text="暂无机构">
-        <el-table-column label="机构" min-width="220"><template #default="scope"><div class="table-primary"><strong>{{ scope.row.name }}</strong><small>{{ scope.row.branch_name }}</small></div></template></el-table-column>
+        <el-table-column label="机构与分院" min-width="240"><template #default="scope"><div class="table-primary"><strong>{{ scope.row.organization?.name || scope.row.name }}</strong><small>{{ scope.row.branch_name }}</small></div></template></el-table-column>
         <el-table-column prop="district" label="区域" width="120" />
         <el-table-column prop="address" label="地址" min-width="220" show-overflow-tooltip />
         <el-table-column label="套餐" width="90"><template #default="scope">{{ scope.row.package_count ?? 0 }}/{{ scope.row.total_package_count ?? scope.row.package_count ?? 0 }}</template></el-table-column>
@@ -18,9 +18,14 @@
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="institutionForm.id ? '编辑机构' : '新增机构'" width="680px" :close-on-click-modal="false">
+    <el-dialog v-model="organizationDialogVisible" title="新增机构主体" width="560px">
+      <el-form label-position="top"><el-form-item label="机构品牌名称" required><el-input v-model="organizationForm.name" maxlength="120"/></el-form-item><el-form-item label="机构介绍"><el-input v-model="organizationForm.description" type="textarea" :rows="4"/></el-form-item><el-form-item label="服务特色"><el-select v-model="organizationForm.service_features" multiple allow-create filterable placeholder="输入特色后回车" style="width:100%"/></el-form-item></el-form>
+      <template #footer><el-button @click="organizationDialogVisible=false">取消</el-button><el-button type="primary" :loading="organizationSaving" @click="saveOrganization">创建机构主体</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="dialogVisible" :title="institutionForm.id ? '编辑分院' : '新增分院'" width="680px" :close-on-click-modal="false">
       <el-form :model="institutionForm" label-position="top" class="responsive-form-grid">
-        <el-form-item label="机构名称" required><el-input v-model="institutionForm.name" maxlength="120" /></el-form-item>
+        <el-form-item label="所属机构主体" required><el-select v-model="institutionForm.organization_id" :disabled="Boolean(institutionForm.id)" style="width:100%"><el-option v-for="item in organizations" :key="item.id" :label="item.name" :value="item.id"/></el-select></el-form-item>
         <el-form-item label="分院 / 门店" required><el-input v-model="institutionForm.branch_name" maxlength="120" /></el-form-item>
         <el-form-item label="区域" required><el-input v-model="institutionForm.district" maxlength="80" /></el-form-item>
         <el-form-item label="咨询电话"><el-input v-model="institutionForm.consult_phone" maxlength="30" /></el-form-item>
@@ -64,18 +69,20 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { createAdminInstitution, createAdminPackage, deactivateAdminInstitution, deactivateAdminPackage, deleteAdminImage, fetchAdminImages, fetchAdminInstitutions, fetchAdminPackages, reorderAdminImages, restoreAdminInstitution, updateAdminInstitution, updateAdminPackage, uploadAdminImage } from "../../api/admin";
+import { createAdminOrganization, createAdminInstitution, createAdminPackage, deactivateAdminInstitution, deactivateAdminPackage, deleteAdminImage, fetchAdminImages, fetchAdminInstitutions, fetchAdminOrganizations, fetchAdminPackages, reorderAdminImages, restoreAdminInstitution, updateAdminInstitution, updateAdminPackage, uploadAdminImage } from "../../api/admin";
 
-const items=ref([]),loading=ref(false),saving=ref(false),errorMessage=ref(""),keyword=ref(""),statusFilter=ref("all"),dialogVisible=ref(false);
-const institutionForm=reactive({id:null,name:"",branch_name:"",district:"",address:"",metro_info:"",consult_phone:"",ext:"",closed_day:"",description:""});
+const items=ref([]),organizations=ref([]),loading=ref(false),saving=ref(false),errorMessage=ref(""),keyword=ref(""),statusFilter=ref("all"),dialogVisible=ref(false),organizationDialogVisible=ref(false),organizationSaving=ref(false);
+const organizationForm=reactive({name:"",description:"",service_features:[]});
+const institutionForm=reactive({id:null,organization_id:null,branch_name:"",district:"",address:"",metro_info:"",consult_phone:"",ext:"",closed_day:"",description:""});
 const filteredItems=computed(()=>items.value.filter((item)=>{const text=`${item.name} ${item.branch_name} ${item.district}`.toLowerCase();const matchesKeyword=text.includes(keyword.value.trim().toLowerCase());const matchesStatus=statusFilter.value==="all"||(statusFilter.value==="active"?item.is_active:!item.is_active);return matchesKeyword&&matchesStatus;}));
 const packageDrawerVisible=ref(false),selectedInstitution=ref(null),packages=ref([]),packagesLoading=ref(false),packageDialogVisible=ref(false),packageSaving=ref(false); const packageForm=reactive({id:null,name:"",focus_area:"",gender_scope:"all",price:0,description:""});
 const galleryDrawerVisible=ref(false),galleryInstitution=ref(null),adminImages=ref([]),galleryLoading=ref(false),galleryUploading=ref(false),galleryOrdering=ref(false),galleryOrderChanged=ref(false),galleryDragIndex=ref(null),galleryFileInput=ref(null);
-function resetInstitution(){Object.assign(institutionForm,{id:null,name:"",branch_name:"",district:"",address:"",metro_info:"",consult_phone:"",ext:"",closed_day:"",description:""});}
+function resetInstitution(){Object.assign(institutionForm,{id:null,organization_id:organizations.value[0]?.id||null,branch_name:"",district:"",address:"",metro_info:"",consult_phone:"",ext:"",closed_day:"",description:""});}
 function openCreate(){resetInstitution();dialogVisible.value=true;}
 function openEdit(item){Object.keys(institutionForm).forEach((key)=>institutionForm[key]=item[key]??(key==="id"?null:""));dialogVisible.value=true;}
-async function load(){loading.value=true;try{const{data}=await fetchAdminInstitutions();items.value=data.items||[];}catch(error){errorMessage.value=error?.response?.data?.message||"机构列表加载失败";}finally{loading.value=false;}}
-async function saveInstitution(){if(!institutionForm.name.trim()||!institutionForm.branch_name.trim()||!institutionForm.district.trim()||!institutionForm.address.trim()){ElMessage.error("请填写机构名称、分院、区域和地址");return;}saving.value=true;const payload=Object.fromEntries(Object.entries(institutionForm).filter(([key])=>key!=="id").map(([key,value])=>[key,typeof value==="string"?(value.trim()||null):value]));try{if(institutionForm.id)await updateAdminInstitution(institutionForm.id,payload);else await createAdminInstitution(payload);ElMessage.success(institutionForm.id?"机构已更新":"机构已创建");dialogVisible.value=false;await load();}catch(error){ElMessage.error(error?.response?.data?.message||"机构保存失败");}finally{saving.value=false;}}
+async function load(){loading.value=true;try{const[a,b]=await Promise.all([fetchAdminInstitutions(),fetchAdminOrganizations()]);items.value=a.data.items||[];organizations.value=b.data.items||[];}catch(error){errorMessage.value=error?.response?.data?.message||"机构列表加载失败";}finally{loading.value=false;}}
+async function saveOrganization(){if(!organizationForm.name.trim())return ElMessage.error("请填写机构品牌名称");organizationSaving.value=true;try{await createAdminOrganization({name:organizationForm.name.trim(),description:organizationForm.description.trim()||null,service_features:organizationForm.service_features});Object.assign(organizationForm,{name:"",description:"",service_features:[]});organizationDialogVisible.value=false;ElMessage.success("机构主体已创建，现在可以添加分院");await load();}catch(error){ElMessage.error(error?.response?.data?.message||"机构主体创建失败");}finally{organizationSaving.value=false;}}
+async function saveInstitution(){if(!institutionForm.organization_id||!institutionForm.branch_name.trim()||!institutionForm.district.trim()||!institutionForm.address.trim()){ElMessage.error("请选择机构主体并填写分院、区域和地址");return;}saving.value=true;const payload=Object.fromEntries(Object.entries(institutionForm).filter(([key])=>key!=="id").map(([key,value])=>[key,typeof value==="string"?(value.trim()||null):value]));try{if(institutionForm.id)await updateAdminInstitution(institutionForm.id,payload);else await createAdminInstitution(payload);ElMessage.success(institutionForm.id?"分院已更新":"分院已创建");dialogVisible.value=false;await load();}catch(error){ElMessage.error(error?.response?.data?.message||"分院保存失败");}finally{saving.value=false;}}
 async function deactivate(item){try{await ElMessageBox.confirm("停用机构会禁止其机构账号登录，并使未使用邀请码失效；历史业务数据保留。","停用机构",{type:"warning",confirmButtonText:"确认停用",cancelButtonText:"取消"});await deactivateAdminInstitution(item.id);ElMessage.success("机构已停用");await load();}catch(error){if(error!=="cancel"&&error!=="close")ElMessage.error(error?.response?.data?.message||"停用失败");}}
 async function restore(item){try{await restoreAdminInstitution(item.id);ElMessage.success("机构已恢复，原有机构账号可继续登录");await load();}catch(error){ElMessage.error(error?.response?.data?.message||"恢复失败");}}
 async function openPackages(item){selectedInstitution.value=item;packageDrawerVisible.value=true;await loadPackages();}

@@ -103,7 +103,7 @@ const menus = {
   user: [
     { name: "dashboard", label: "健康总览", icon: "总" },
     { name: "timeline", label: "健康时间线", icon: "线" },
-    { name: "health-data", label: "健康数据", icon: "数" },
+    { name: "health-data", label: "体检数据", icon: "检" },
     { name: "trends", label: "健康趋势", icon: "趋" },
     { name: "friends", label: "亲友授权", icon: "友" },
     { name: "institutions", label: "体检机构", icon: "院" },

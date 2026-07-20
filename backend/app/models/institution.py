@@ -7,7 +7,7 @@ from app.extensions import db
 class Institution(db.Model):
     __tablename__ = "institutions"
     __table_args__ = (
-        db.UniqueConstraint("name", "branch_name", name="uq_institution_branch"),
+        db.UniqueConstraint("organization_id", "branch_name", name="uq_institution_branch"),
         db.CheckConstraint("length(trim(name)) > 0", name="ck_institutions_name_not_blank"),
         db.CheckConstraint("length(trim(branch_name)) > 0", name="ck_institutions_branch_not_blank"),
         db.CheckConstraint("length(trim(address)) > 0", name="ck_institutions_address_not_blank"),
@@ -15,6 +15,14 @@ class Institution(db.Model):
     )
 
     id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(
+        db.Integer,
+        db.ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
+    )
+    # Compatibility snapshot retained for old clients and migrations. New
+    # business reads use organization.name as the canonical brand name.
     name = db.Column(db.String(120), nullable=False)
     branch_name = db.Column(db.String(120), nullable=False)
     address = db.Column(db.String(255), nullable=False)
@@ -36,6 +44,7 @@ class Institution(db.Model):
     )
 
     packages = db.relationship("Package", back_populates="institution", cascade="all, delete-orphan")
+    organization = db.relationship("Organization", back_populates="branches")
     administrators = db.relationship(
         "User",
         back_populates="managed_institution",
@@ -69,7 +78,13 @@ class Institution(db.Model):
         active_package_count = sum(1 for package in self.packages if package.is_active)
         return {
             "id": self.id,
-            "name": self.name,
+            "organization_id": self.organization_id,
+            "organization": {
+                "id": self.organization.id,
+                "name": self.organization.name,
+                "is_active": self.organization.is_active,
+            } if self.organization else None,
+            "name": self.organization.name if self.organization else self.name,
             "branch_name": self.branch_name,
             "address": self.address,
             "district": self.district,

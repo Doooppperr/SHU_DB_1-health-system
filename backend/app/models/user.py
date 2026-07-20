@@ -84,7 +84,8 @@ class User(db.Model):
         if self.managed_institution is not None:
             institution = {
                 "id": self.managed_institution.id,
-                "name": self.managed_institution.name,
+                "organization_id": self.managed_institution.organization_id,
+                "name": self.managed_institution.organization.name if self.managed_institution.organization else self.managed_institution.name,
                 "branch_name": self.managed_institution.branch_name,
                 "is_active": self.managed_institution.is_active,
             }
