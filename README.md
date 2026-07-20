@@ -128,7 +128,7 @@ Set-Location .\backend
 - 后端：<http://127.0.0.1:5050>
 - 健康检查：<http://127.0.0.1:5050/api/health>
 
-一键启动会在后端健康检查通过后，同时启动隐藏的通知 worker；它每 5 秒领取一次 Outbox，自动发送预约、约满和空位提醒。关闭前端启动命令后，该 worker 会随之停止。仅需单独运行邮件处理时可执行 `./scripts/start-notification-worker.ps1`。
+一键启动会在后端健康检查通过后，同时启动隐藏的通知 worker；它每 5 秒领取一次 Outbox，自动发送预约、约满和空位提醒。邮件正文会按事件转换为连续、可读的中文说明，不暴露 JSON 字段或内部键名。关闭前端启动命令后，该 worker 会随之停止。仅需单独运行邮件处理时可执行 `./scripts/start-notification-worker.ps1`。
 
 本机生产演示：
 
@@ -225,7 +225,7 @@ npm run build
 npm audit --omit=dev
 ```
 
-当前验收基线：后端 47 项、前端 100 项测试通过，Vite production build 通过；SQLite v7 结构、演示数据预检与覆盖流程已验证。
+当前验收基线：后端 49 项、前端 100 项测试通过，Vite production build 通过；SQLite v7 结构、演示数据预检与覆盖流程已验证。
 
 ## 备份
 

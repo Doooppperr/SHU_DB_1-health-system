@@ -45,3 +45,60 @@ def test_worker_watch_delivers_each_outbox_row_once(app, monkeypatch):
         assert row.attempts == 1
         assert NotificationDelivery.query.filter_by(outbox_id=row_id, success=True).count() == 1
         assert notification_worker.run_batch(app) == (0, 0)
+
+
+def test_email_content_is_continuous_readable_text():
+    row = NotificationOutbox(
+        event_type="waitlist_available",
+        idempotency_key="email-copy-test",
+        recipient="shared-test@example.test",
+        payload={
+            "institution": "澄心健康管理中心",
+            "branch": "徐汇综合院区",
+            "appointment_date": "2026-07-28",
+            "party_size": 3,
+            "message": "raw payload text",
+        },
+    )
+
+    subject, body = notification_worker._email_content(row)
+
+    assert subject == "HealthDoc 空位提醒"
+    assert "澄心健康管理中心·徐汇综合院区" in body
+    assert "2026年7月28日" in body
+    assert "3位受检者" in body
+    assert "不代表预约已经成功" in body
+    assert "{\"" not in body and '"institution"' not in body
+    assert body.endswith("本邮件由康康健健 HealthDoc 自动发送，请勿直接回复。")
+
+
+def test_email_content_covers_institution_booking_events():
+    booking = NotificationOutbox(
+        event_type="booking_group_created",
+        idempotency_key="booking-copy-test",
+        recipient="shared-test@example.test",
+        payload={
+            "group_code": "BG-DEMO-001",
+            "institution": "衡康代谢与慢病管理中心",
+            "appointment_date": "2026-08-03",
+            "package": "糖脂代谢专项",
+            "party_size": 2,
+        },
+    )
+    full = NotificationOutbox(
+        event_type="appointment_date_full",
+        idempotency_key="full-copy-test",
+        recipient="shared-test@example.test",
+        payload={
+            "institution": "衡康代谢与慢病管理中心",
+            "appointment_date": "2026-08-03",
+        },
+    )
+
+    booking_subject, booking_body = notification_worker._email_content(booking)
+    full_subject, full_body = notification_worker._email_content(full)
+
+    assert booking_subject == "HealthDoc 新预约提醒"
+    assert "BG-DEMO-001" in booking_body and "糖脂代谢专项" in booking_body
+    assert full_subject == "HealthDoc 预约容量提醒"
+    assert "预约名额现已约满" in full_body

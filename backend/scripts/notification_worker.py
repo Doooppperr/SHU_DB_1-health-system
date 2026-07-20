@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
-import json
 from pathlib import Path
 import smtplib
 import sys
@@ -21,14 +20,62 @@ from app.extensions import db  # noqa: E402
 from app.models import NotificationDelivery, NotificationOutbox  # noqa: E402
 
 
+def _display_date(value):
+    try:
+        parsed = date.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return str(value or "待确认")
+    return f"{parsed.year}年{parsed.month}月{parsed.day}日"
+
+
+def _email_content(row):
+    """Turn an Outbox payload into readable prose instead of exposing raw JSON."""
+    payload = row.payload if isinstance(row.payload, dict) else {}
+    institution = str(payload.get("institution") or "体检机构")
+    branch = str(payload.get("branch") or "").strip()
+    institution_label = f"{institution}·{branch}" if branch and branch not in institution else institution
+    appointment_date = _display_date(payload.get("appointment_date"))
+    party_size = max(1, int(payload.get("party_size") or 1))
+
+    if row.event_type == "booking_group_created":
+        subject = "HealthDoc 新预约提醒"
+        body = (
+            f"您好，{institution_label}刚刚收到一笔新的体检预约。"
+            f"预约编号为{payload.get('group_code') or '待确认'}，预约服务为"
+            f"{payload.get('package') or '体检服务'}，体检日期为{appointment_date}，"
+            f"共{party_size}位受检者。请登录康康健健 HealthDoc 机构工作台查看预约详情，"
+            "并按计划完成接待准备。"
+        )
+    elif row.event_type == "appointment_date_full":
+        subject = "HealthDoc 预约容量提醒"
+        body = (
+            f"您好，{institution_label}在{appointment_date}的体检预约名额现已约满。"
+            "请登录康康健健 HealthDoc 机构工作台查看当天的容量与预约安排；"
+            "如后续有用户取消，系统会按规则更新空位提醒。"
+        )
+    elif row.event_type == "waitlist_available":
+        subject = "HealthDoc 空位提醒"
+        body = (
+            f"您好，您关注的{institution_label}在{appointment_date}出现了可预约名额，"
+            f"可供您登记的{party_size}位受检者重新尝试预约。名额先到先得，"
+            "本邮件仅用于提醒，不代表预约已经成功，也不会为您保留名额。"
+            "请尽快登录康康健健 HealthDoc 平台查看最新容量并确认预约。"
+        )
+    else:
+        subject = "HealthDoc 服务通知"
+        detail = str(payload.get("message") or "您有一条新的平台通知。")
+        body = f"您好，{detail}请登录康康健健 HealthDoc 平台查看详情。"
+
+    footer = "本邮件由康康健健 HealthDoc 自动发送，请勿直接回复。"
+    return subject, f"{body}\n\n{footer}"
+
+
 def _send(app, row):
-    subject = {"booking_group_created": "新的体检预约组",
-               "appointment_date_full": "体检日期已约满",
-               "waitlist_available": "您关注的体检日期出现可预约名额"}.get(row.event_type, "康康健健通知")
+    subject, body = _email_content(row)
     recipient = app.config.get("NOTIFICATION_EMAIL_REDIRECT") or row.recipient
     message = EmailMessage(); message["Subject"] = subject
     message["From"] = app.config["SMTP_FROM"]; message["To"] = recipient
-    message.set_content(json.dumps(row.payload, ensure_ascii=False, indent=2))
+    message.set_content(body)
     if app.config["NOTIFICATION_EMAIL_DRY_RUN"]:
         return f"dry-run-{row.id}"
     if not app.config["SMTP_HOST"]:

@@ -20,7 +20,7 @@ if (-not (Test-Path .env)) {
 
 本地通知默认 `NOTIFICATION_EMAIL_DRY_RUN=1`，只验证 Outbox/重试流程而不连接外部邮箱。需要联调真实 SMTP 时，在被 Git 忽略的 `.env` 中配置 `SMTP_*` 并设为 `0`；`NOTIFICATION_EMAIL_REDIRECT` 可将所有通知统一投递到一个测试收件箱。注册必须填写有效邮箱，但邮箱只作为通知渠道，不作为账号唯一标识，因此家庭成员和演示账号可以共用一个邮箱；空位提醒直接使用当前账号绑定的通知邮箱。新建演示库时可用 `DEMO_SHARED_EMAIL` 统一绑定测试账号，真实地址不要写入受版本控制的文件。
 
-根目录的 `scripts/start-full-dev.ps1` 和 `scripts/start-full-prod.ps1` 会在后端就绪后自动启动隐藏的常驻 worker，每 5 秒处理一次 Outbox，并在前端命令退出时停止。单独运行可使用 `scripts/start-notification-worker.ps1`，或在后端目录执行 `python scripts/notification_worker.py --watch --interval-seconds 5`。条件更新保证误开两个 worker 时同一条通知只会被一个进程领取。
+根目录的 `scripts/start-full-dev.ps1` 和 `scripts/start-full-prod.ps1` 会在后端就绪后自动启动隐藏的常驻 worker，每 5 秒处理一次 Outbox，并在前端命令退出时停止。单独运行可使用 `scripts/start-notification-worker.ps1`，或在后端目录执行 `python scripts/notification_worker.py --watch --interval-seconds 5`。条件更新保证误开两个 worker 时同一条通知只会被一个进程领取；发送前会把 Outbox 载荷转换为连续的中文业务文本，不会把 JSON 原文发给用户。
 
 ## 数据库与 schema v7
 
@@ -183,7 +183,7 @@ Waitress 本机演示推荐从项目根目录运行：
 .\.venv\Scripts\python.exe -m pip check
 ```
 
-当前 47 项测试使用独立内存 SQLite，不修改 `instance/health_system.db`；覆盖 schema v7、旧库全量保留升级、演示数据安全重建、健康领域、套餐版本、多人预约组、候补提醒、Outbox 常驻领取且不重复发送、报告指标/文字/附件、亲友只读边界、趋势与时间线、AI 同意、RAG、识别导入临时文件删除及全量快照迁移。完整结论见 [`../项目文档/测试报告.md`](../项目文档/测试报告.md)。
+当前 49 项测试使用独立内存 SQLite，不修改 `instance/health_system.db`；覆盖 schema v7、旧库全量保留升级、演示数据安全重建、健康领域、套餐版本、多人预约组、候补提醒、Outbox 常驻领取且不重复发送、连续中文邮件正文、报告指标/文字/附件、亲友只读边界、趋势与时间线、AI 同意、RAG、识别导入临时文件删除及全量快照迁移。完整结论见 [`../项目文档/测试报告.md`](../项目文档/测试报告.md)。
 
 ## 生产数据库同步
 
