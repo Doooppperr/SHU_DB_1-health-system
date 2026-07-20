@@ -130,6 +130,54 @@ def test_changed_remote_hash_is_quarantined_and_old_snapshot_is_used(
     assert (cache / f"quarantine-{changed_hash}.pdf").read_bytes() == changed
 
 
+def test_remote_timeout_uses_verified_approved_cache(monkeypatch, tmp_path, capsys):
+    approved = b"approved-pdf"
+    source = {
+        "source_id": "cached-source",
+        "kind": "remote_pdf",
+        "url": "https://www.nhc.gov.cn/source.pdf",
+        "approved_sha256": hashlib.sha256(approved).hexdigest(),
+    }
+    monkeypatch.setattr(rag_sync, "RUNTIME_DIR", tmp_path)
+    monkeypatch.setattr(
+        rag_sync,
+        "_download",
+        lambda _url: (_ for _ in ()).throw(rag_sync.requests.ReadTimeout("timeout")),
+    )
+    cache = tmp_path / "sources" / source["source_id"]
+    cache.mkdir(parents=True)
+    (cache / "approved.pdf").write_bytes(approved)
+
+    data, canonical_url, quarantined = rag_sync._source_bytes(source, {"sources": {}})
+
+    assert data == approved
+    assert canonical_url == source["url"]
+    assert quarantined is False
+    assert "rag_source_cache_fallback" in capsys.readouterr().err
+
+
+def test_remote_timeout_without_verified_cache_remains_fatal(monkeypatch, tmp_path):
+    source = {
+        "source_id": "uncached-source",
+        "kind": "remote_pdf",
+        "url": "https://www.nhc.gov.cn/source.pdf",
+        "approved_sha256": hashlib.sha256(b"approved-pdf").hexdigest(),
+    }
+    monkeypatch.setattr(rag_sync, "RUNTIME_DIR", tmp_path)
+    monkeypatch.setattr(
+        rag_sync,
+        "_download",
+        lambda _url: (_ for _ in ()).throw(rag_sync.requests.ReadTimeout("timeout")),
+    )
+
+    try:
+        rag_sync._source_bytes(source, {"sources": {}})
+    except RuntimeError as error:
+        assert "no approved cache" in str(error)
+    else:
+        raise AssertionError("remote source without an approved cache was accepted")
+
+
 def test_existing_collection_switches_alias_in_one_atomic_call(monkeypatch):
     operations = []
 

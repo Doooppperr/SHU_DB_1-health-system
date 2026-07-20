@@ -153,11 +153,27 @@ def _source_bytes(source, state):
             raise RuntimeError(f"{source_id} local content does not match its approved hash")
         return data, source.get("canonical_url", ""), False
 
-    data = _download(source["url"])
-    digest = hashlib.sha256(data).hexdigest()
     cache_dir = RUNTIME_DIR / "sources" / source_id
     cache_dir.mkdir(parents=True, exist_ok=True)
     approved_path = cache_dir / "approved.pdf"
+    try:
+        data = _download(source["url"])
+    except (requests.RequestException, OSError) as exc:
+        if (
+            not approved_path.exists()
+            or hashlib.sha256(approved_path.read_bytes()).hexdigest() != approved_hash
+        ):
+            raise RuntimeError(
+                f"{source_id} download failed and no approved cache is available"
+            ) from exc
+        print(
+            f"rag_source_cache_fallback source_id={source_id} reason={type(exc).__name__}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return approved_path.read_bytes(), source["url"], False
+
+    digest = hashlib.sha256(data).hexdigest()
     if digest != approved_hash:
         quarantine = cache_dir / f"quarantine-{digest}.pdf"
         quarantine.write_bytes(data)

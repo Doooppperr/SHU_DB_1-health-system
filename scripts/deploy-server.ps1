@@ -1,3 +1,5 @@
+#requires -Version 7.0
+
 param(
     [string]$Server = "111.229.87.94",
     [string]$SshUser = "ubuntu",
