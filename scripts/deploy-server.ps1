@@ -184,7 +184,12 @@ finally:
         $remoteMailArgument = " '$remoteMailSettings'"
     }
 
-    ssh -t "${SshUser}@${Server}" "bash -n '$remoteScript' && chmod 700 '$remoteScript' && sudo bash '$remoteScript' '$remoteArchive' '$releaseId'$remoteDatabaseArgument$remoteAssetsArgument$remoteMailArgument"
+    # The release helper is fully non-interactive. Avoid forcing a TTY here:
+    # Windows OpenSSH can otherwise keep the client session open after the
+    # remote release has already completed. BatchMode also prevents an
+    # accidental password prompt, while sudo -n fails fast when the host is
+    # not configured for unattended releases.
+    ssh -o BatchMode=yes "${SshUser}@${Server}" "bash -n '$remoteScript' && chmod 700 '$remoteScript' && sudo -n bash '$remoteScript' '$remoteArchive' '$releaseId'$remoteDatabaseArgument$remoteAssetsArgument$remoteMailArgument"
     Assert-LastExitCode "Remote release"
 
     Write-Host "Deployment completed: http://$Server"
