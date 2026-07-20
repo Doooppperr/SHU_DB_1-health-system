@@ -1,4 +1,5 @@
 from flask import request
+from datetime import datetime, timezone
 from flask_jwt_extended import get_jwt_identity, jwt_required, verify_jwt_in_request
 
 from app.extensions import db
@@ -157,6 +158,26 @@ def update_authorization(relation_id: int):
         return {"message": "auth_status must be boolean"}, 400
 
     relation.auth_status = auth_status
+    db.session.commit()
+    return {"item": relation.to_dict()}, 200
+
+
+@friends_bp.put("/<int:relation_id>/booking-authorization")
+@jwt_required()
+def update_booking_authorization(relation_id: int):
+    """The prospective examinee explicitly grants/revokes proxy-booking only."""
+    user_id = _current_user_id()
+    relation = _get_relation_visible_to_user(relation_id, user_id)
+    if relation is None:
+        return {"message": "friend relation not found"}, 404
+    if relation.friend_user_id != user_id:
+        return {"message": "only friend user can update booking authorization"}, 403
+    payload = request.get_json(silent=True) or {}
+    allowed = _parse_bool(payload.get("booking_auth_status"))
+    if allowed is None:
+        return {"message": "booking_auth_status must be boolean"}, 400
+    relation.booking_auth_status = allowed
+    relation.booking_authorized_at = datetime.now(timezone.utc) if allowed else None
     db.session.commit()
     return {"item": relation.to_dict()}, 200
 

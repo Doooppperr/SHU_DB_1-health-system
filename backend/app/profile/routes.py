@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from app.extensions import db
 from app.profile import profile_bp
 from app.services.permissions import ROLE_USER, roles_required
+from app.services.contact import is_valid_email, normalize_email
 
 
 PROFILE_FIELDS = {"real_name", "birth_date", "gender", "allergy_history", "medical_history", "email", "phone"}
@@ -42,12 +43,23 @@ def update_profile():
         if gender not in GENDERS | {None}:
             return {"message": "invalid gender"}, 400
         g.current_user.gender = gender
-    for field in ("allergy_history", "medical_history", "email", "phone"):
+    for field in ("allergy_history", "medical_history", "phone"):
         if field in payload:
             setattr(g.current_user, field, (payload.get(field) or "").strip() or None)
+    if "email" in payload:
+        email = normalize_email(payload.get("email"))
+        if not email:
+            return {"message": "邮箱为必填项，不能清空"}, 400
+        if not is_valid_email(email):
+            return {"message": "请输入有效的邮箱地址"}, 400
+        if email != g.current_user.email:
+            g.current_user.email = email
+            # A newly bound or changed address must be verified again before it
+            # can receive vacancy reminders.
+            g.current_user.email_verified_at = None
     try:
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
-        return {"message": "email already exists"}, 409
+        return {"message": "资料保存冲突，请检查后重试"}, 409
     return {"item": g.current_user.to_dict()}, 200

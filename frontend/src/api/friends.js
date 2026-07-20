@@ -15,6 +15,9 @@ export function renameFriend(relationId, payload) {
 export function updateFriendAuthorization(relationId, payload) {
   return http.put(`/friends/${relationId}/authorization`, payload);
 }
+export function updateBookingAuthorization(relationId, payload) {
+  return http.put(`/friends/${relationId}/booking-authorization`, payload);
+}
 
 export function deleteFriend(relationId) {
   return http.delete(`/friends/${relationId}`);

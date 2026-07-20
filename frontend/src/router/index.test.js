@@ -26,4 +26,10 @@ describe("three-role route isolation", () => {
   it("routes unknown URLs to the not-found page", () => {
     expect(router.resolve("/missing/page").name).toBe("not-found");
   });
+
+  it("keeps the old measurement URL as a dashboard quick-action redirect", () => {
+    const route = router.resolve("/measurements");
+    const redirect = route.matched.at(-1).redirect;
+    expect(redirect).toEqual({ name: "dashboard", query: { quick: "measurement" } });
+  });
 });

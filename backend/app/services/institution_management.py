@@ -23,7 +23,8 @@ INSTITUTION_FIELDS = {
     "description",
 }
 REQUIRED_INSTITUTION_FIELDS = {"name", "branch_name", "address", "district"}
-PACKAGE_FIELDS = {"name", "focus_area", "gender_scope", "price", "description"}
+PACKAGE_FIELDS = {"name", "focus_area", "gender_scope", "price", "description",
+                  "package_type", "audience", "booking_notice"}
 VALID_GENDER_SCOPES = {"all", "male", "female", "female_all"}
 IMAGE_LIMIT = 8
 IMAGE_MAX_BYTES = 5 * 1024 * 1024
@@ -109,6 +110,13 @@ def apply_package_payload(package: Package, payload: dict, *, creating: bool = F
             if value < 0:
                 raise ManagementValidationError("price must be non-negative")
             package.price = value
+        elif field == "package_type":
+            value = str(payload.get(field) or "").strip()
+            if value not in {"special", "combined"}:
+                raise ManagementValidationError("package_type must be special or combined")
+            package.package_type = value
+        elif field in {"audience", "booking_notice"}:
+            setattr(package, field, str(payload.get(field) or "").strip() or None)
         else:
             package.description = str(payload.get(field) or "").strip() or None
 

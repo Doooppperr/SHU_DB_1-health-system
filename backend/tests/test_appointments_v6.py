@@ -64,7 +64,7 @@ def test_institution_invalidation_is_final_and_visible_in_friend_timeline(app, c
     before_invalidation = client.get(f"/api/health/timeline?owner_id={owner_id}", headers=viewer).get_json()["items"]
     booked_event = next(item for item in before_invalidation if item["type"] == "appointment" and item["item"]["id"] == appointment_id)
     assert booked_event["item"]["status"] == "unfulfilled"
-    assert booked_event["item"]["status_label"] == "未履约"
+    assert booked_event["item"]["status_label"] == "预约成功"
     assert booked_event["item"]["package_name"]
 
     invalidated = client.post(f"/api/org/appointments/{appointment_id}/invalidate", headers=org)

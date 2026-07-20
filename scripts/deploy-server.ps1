@@ -2,7 +2,8 @@ param(
     [string]$Server = "111.229.87.94",
     [string]$SshUser = "ubuntu",
     [switch]$SkipTests,
-    [switch]$SyncDemoDatabase
+    [switch]$SyncDemoDatabase,
+    [switch]$SyncMailSettings
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,6 +16,12 @@ $remoteScript = "/home/$SshUser/healthdoc-release-server.sh"
 $demoSnapshotName = "healthdoc-demo-$releaseId.db"
 $demoSnapshotPath = Join-Path ([System.IO.Path]::GetTempPath()) $demoSnapshotName
 $remoteDemoSnapshot = "/home/$SshUser/$demoSnapshotName"
+$demoAssetsName = "healthdoc-demo-assets-$releaseId.tar.gz"
+$demoAssetsPath = Join-Path ([System.IO.Path]::GetTempPath()) $demoAssetsName
+$remoteDemoAssets = "/home/$SshUser/$demoAssetsName"
+$mailSettingsName = "healthdoc-mail-$releaseId.env"
+$mailSettingsPath = Join-Path ([System.IO.Path]::GetTempPath()) $mailSettingsName
+$remoteMailSettings = "/home/$SshUser/$mailSettingsName"
 
 function Assert-LastExitCode([string]$Step) {
     if ($LASTEXITCODE -ne 0) {
@@ -79,7 +86,8 @@ try {
     scp (Join-Path $projectRoot "deploy\release-server.sh") "${SshUser}@${Server}:$remoteScript"
     Assert-LastExitCode "Release helper upload"
 
-    $remoteDatabaseArgument = ""
+    $remoteDatabaseArgument = " ''"
+    $remoteAssetsArgument = " ''"
     if ($SyncDemoDatabase) {
         $sourceDatabase = Join-Path $projectRoot "backend\instance\health_system.db"
         if (-not (Test-Path -LiteralPath $sourceDatabase -PathType Leaf)) {
@@ -107,9 +115,61 @@ finally:
         scp $demoSnapshotPath "${SshUser}@${Server}:$remoteDemoSnapshot"
         Assert-LastExitCode "Demo database upload"
         $remoteDatabaseArgument = " '$remoteDemoSnapshot'"
+
+        $uploadsRoot = Join-Path $projectRoot "backend\uploads"
+        $requiredDemoAssetDirectories = @(
+            (Join-Path $uploadsRoot "institutions\demo-v7"),
+            (Join-Path $uploadsRoot "health-assets\demo-v7")
+        )
+        foreach ($directory in $requiredDemoAssetDirectories) {
+            if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+                throw "Synthetic demo asset directory not found: $directory"
+            }
+        }
+        Remove-Item -LiteralPath $demoAssetsPath -Force -ErrorAction SilentlyContinue
+        tar -czf $demoAssetsPath -C $uploadsRoot institutions/demo-v7 health-assets/demo-v7
+        Assert-LastExitCode "Demo asset packaging"
+        scp $demoAssetsPath "${SshUser}@${Server}:$remoteDemoAssets"
+        Assert-LastExitCode "Demo asset upload"
+        $remoteAssetsArgument = " '$remoteDemoAssets'"
     }
 
-    ssh -t "${SshUser}@${Server}" "chmod 700 '$remoteScript' && sudo bash '$remoteScript' '$remoteArchive' '$releaseId'$remoteDatabaseArgument"
+    $remoteMailArgument = " ''"
+    if ($SyncMailSettings) {
+        $localEnvPath = Join-Path $projectRoot "backend\.env"
+        if (-not (Test-Path -LiteralPath $localEnvPath -PathType Leaf)) {
+            throw "Local backend/.env is required for -SyncMailSettings."
+        }
+        $allowedMailKeys = @(
+            "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD",
+            "SMTP_FROM", "SMTP_USE_TLS", "NOTIFICATION_EMAIL_DRY_RUN",
+            "NOTIFICATION_EMAIL_REDIRECT"
+        )
+        $mailValues = @{}
+        foreach ($line in [System.IO.File]::ReadAllLines($localEnvPath)) {
+            if ($line -match '^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$' -and $allowedMailKeys -contains $Matches[1]) {
+                $mailValues[$Matches[1]] = $Matches[2]
+            }
+        }
+        foreach ($requiredKey in @("SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM")) {
+            if (-not $mailValues.ContainsKey($requiredKey) -or [string]::IsNullOrWhiteSpace($mailValues[$requiredKey])) {
+                throw "Local mail setting $requiredKey is missing; refusing server mail sync."
+            }
+        }
+        if ($mailValues["NOTIFICATION_EMAIL_DRY_RUN"] -ne "0") {
+            throw "NOTIFICATION_EMAIL_DRY_RUN must be 0 before server mail sync."
+        }
+        $mailLines = foreach ($key in $allowedMailKeys) {
+            if ($mailValues.ContainsKey($key)) { "$key=$($mailValues[$key])" }
+        }
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllLines($mailSettingsPath, $mailLines, $utf8NoBom)
+        scp $mailSettingsPath "${SshUser}@${Server}:$remoteMailSettings"
+        Assert-LastExitCode "Mail settings upload"
+        $remoteMailArgument = " '$remoteMailSettings'"
+    }
+
+    ssh -t "${SshUser}@${Server}" "bash -n '$remoteScript' && chmod 700 '$remoteScript' && sudo bash '$remoteScript' '$remoteArchive' '$releaseId'$remoteDatabaseArgument$remoteAssetsArgument$remoteMailArgument"
     Assert-LastExitCode "Remote release"
 
     Write-Host "Deployment completed: http://$Server"
@@ -117,4 +177,6 @@ finally:
 finally {
     Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $demoSnapshotPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $demoAssetsPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $mailSettingsPath -Force -ErrorAction SilentlyContinue
 }

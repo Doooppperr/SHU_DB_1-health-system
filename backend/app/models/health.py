@@ -65,6 +65,7 @@ class InstitutionReport(db.Model):
     subject_health_id = db.Column(db.String(20), nullable=False, index=True)
     exam_date = db.Column(db.Date, nullable=False, index=True)
     package_id = db.Column(db.Integer, db.ForeignKey("packages.id", ondelete="SET NULL"), nullable=True)
+    package_version_id = db.Column(db.Integer, db.ForeignKey("package_versions.id", ondelete="SET NULL"), nullable=True, index=True)
     appointment_id = db.Column(db.Integer, db.ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True, unique=True, index=True)
     matched_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     status = db.Column(db.String(24), nullable=False, default="draft", index=True)
@@ -79,8 +80,11 @@ class InstitutionReport(db.Model):
     creator = db.relationship("User", foreign_keys=[created_by_user_id])
     owner = db.relationship("User", foreign_keys=[matched_user_id])
     package = db.relationship("Package")
+    package_version = db.relationship("PackageVersion")
     appointment = db.relationship("Appointment", back_populates="report")
     indicators = db.relationship("ReportIndicator", back_populates="report", cascade="all, delete-orphan", order_by="ReportIndicator.id.asc()")
+    text_results = db.relationship("ReportTextResult", back_populates="report", cascade="all, delete-orphan", order_by="ReportTextResult.sort_order")
+    assets = db.relationship("ReportAsset", back_populates="report", cascade="all, delete-orphan", order_by="ReportAsset.sort_order")
 
     # Transitional internal aliases keep the mature AI fact builder usable while
     # the public v1 record API and old database tables are removed.
@@ -100,6 +104,7 @@ class InstitutionReport(db.Model):
             "display_id": self.display_id,
             "institution_id": self.institution_id,
             "package_id": self.package_id,
+            "package_version_id": self.package_version_id,
             "appointment_id": self.appointment_id,
             "exam_date": self.exam_date.isoformat(),
             "status": self.status,
@@ -111,7 +116,10 @@ class InstitutionReport(db.Model):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "institution": {"id": self.institution.id, "name": self.institution.name, "branch_name": self.institution.branch_name} if self.institution else None,
             "package": {"id": self.package.id, "name": self.package.name} if self.package else None,
+            "package_version": self.package_version.to_dict() if self.package_version else None,
             "indicator_count": len(self.indicators),
+            "text_result_count": len(self.text_results),
+            "asset_count": len(self.assets),
         }
         if not user_view:
             result["subject_health_id"] = self.subject_health_id
@@ -120,6 +128,8 @@ class InstitutionReport(db.Model):
             result.pop("created_by_username_snapshot", None)
         if include_indicators:
             result["indicators"] = [item.to_dict() for item in self.indicators]
+            result["text_results"] = [item.to_dict() for item in self.text_results]
+            result["assets"] = [item.to_dict(self.display_id) for item in self.assets]
         return result
 
 
@@ -137,9 +147,20 @@ class ReportIndicator(db.Model):
     value = db.Column(db.String(120), nullable=False)
     is_abnormal = db.Column(db.Boolean, nullable=False, default=False)
     input_source = db.Column(db.String(20), nullable=False, default="manual")
+    display_domain_id = db.Column(db.Integer, db.ForeignKey("health_domains.id"), nullable=True, index=True)
+    original_name = db.Column(db.String(160), nullable=True)
+    original_value = db.Column(db.String(160), nullable=True)
+    original_unit = db.Column(db.String(40), nullable=True)
+    normalized_unit = db.Column(db.String(40), nullable=True)
+    reference_text = db.Column(db.String(255), nullable=True)
+    method_snapshot = db.Column(db.String(160), nullable=True)
+    abnormal_flag = db.Column(db.String(20), nullable=True)
+    mapping_confidence = db.Column(db.Numeric(5, 4), nullable=True)
+    mapping_status = db.Column(db.String(30), nullable=False, default="confirmed", server_default="confirmed")
 
     report = db.relationship("InstitutionReport", back_populates="indicators")
     indicator_dict = db.relationship("IndicatorDict", back_populates="report_indicators")
+    display_domain = db.relationship("HealthDomain")
     record_id = synonym("report_id")
     source = synonym("input_source")
 
@@ -153,4 +174,14 @@ class ReportIndicator(db.Model):
             "input_source": self.input_source,
             "source": self.input_source,
             "indicator": self.indicator_dict.to_dict() if self.indicator_dict else None,
+            "display_domain_id": self.display_domain_id,
+            "original_name": self.original_name,
+            "original_value": self.original_value,
+            "original_unit": self.original_unit,
+            "normalized_unit": self.normalized_unit,
+            "reference_text": self.reference_text,
+            "method": self.method_snapshot,
+            "abnormal_flag": self.abnormal_flag,
+            "mapping_confidence": float(self.mapping_confidence) if self.mapping_confidence is not None else None,
+            "mapping_status": self.mapping_status,
         }

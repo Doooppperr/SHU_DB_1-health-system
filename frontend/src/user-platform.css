@@ -1,0 +1,1684 @@
+/* User-facing platform surfaces: journeys, records and guided actions. */
+.user-platform-page {
+  --user-accent: var(--workspace-accent, #168879);
+  --user-soft: var(--workspace-soft, #e7f3f0);
+  --user-border: var(--color-border, #d9e1df);
+  --user-surface: var(--color-surface, #fff);
+  --user-muted: var(--color-surface-muted, #f5f7f6);
+  --user-text: var(--color-text, #203438);
+  --user-text-soft: var(--color-text-secondary, #687779);
+}
+
+.user-kicker,
+.user-section-heading > div > span,
+.user-section-heading--outside > div > span,
+.booking-step-heading > span,
+.trend-story-card > header > div > span,
+.health-domain-card__header > div > span,
+.health-conclusion-card > span,
+.institution-info-card > span {
+  color: var(--user-accent, var(--color-accent));
+  font-size: var(--text-xs, 12px);
+  font-weight: 760;
+  letter-spacing: 0.08em;
+}
+
+.user-panel {
+  border-color: var(--user-border) !important;
+  border-radius: var(--radius-lg, 16px) !important;
+  background: var(--user-surface) !important;
+}
+
+.user-page-lead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 28px;
+  padding: 8px 2px 4px;
+}
+
+.user-page-lead > div {
+  max-width: 760px;
+}
+
+.user-page-lead h2,
+.user-hero h2,
+.health-detail-hero h2,
+.institution-profile-hero h2 {
+  margin: 7px 0 9px;
+  color: var(--user-text);
+  font-size: clamp(1.65rem, 2.3vw, 2.35rem);
+  line-height: 1.22;
+  letter-spacing: -0.025em;
+}
+
+.user-page-lead p,
+.booking-step-heading p,
+.measurement-drawer__intro p {
+  margin: 0;
+  color: var(--user-text-soft);
+  font-size: var(--text-base, 16px);
+  line-height: 1.75;
+}
+
+.user-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 0.42fr);
+  gap: 34px;
+  min-height: 270px;
+  padding: 44px 46px;
+  overflow: hidden;
+  border: 1px solid var(--user-border);
+  border-radius: 24px;
+  color: var(--user-text);
+  background:
+    radial-gradient(circle at 92% 18%, color-mix(in srgb, var(--user-accent) 22%, transparent), transparent 31%),
+    linear-gradient(135deg, var(--user-surface), color-mix(in srgb, var(--user-soft) 76%, var(--user-surface)));
+}
+
+.user-hero__copy {
+  align-self: center;
+  max-width: 710px;
+}
+
+.user-hero__copy > p {
+  max-width: 650px;
+  margin: 0;
+  color: var(--user-text-soft);
+  font-size: var(--text-base, 16px);
+  line-height: 1.75;
+}
+
+.user-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 26px;
+}
+
+.user-hero__today {
+  display: flex;
+  align-self: center;
+  flex-direction: column;
+  gap: 9px;
+  padding: 30px;
+  border: 1px solid color-mix(in srgb, var(--user-accent) 24%, var(--user-border));
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--user-surface) 84%, transparent);
+  box-shadow: var(--shadow-sm, 0 8px 24px rgb(0 0 0 / 7%));
+}
+
+.user-hero__today span,
+.user-hero__today small {
+  color: var(--user-text-soft);
+}
+
+.user-hero__today strong {
+  font-size: var(--text-lg, 18px);
+}
+
+.user-dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+  gap: 18px;
+}
+
+.user-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  width: 100%;
+}
+
+.user-section-heading h3 {
+  margin: 3px 0 0;
+  color: var(--user-text);
+  font-size: var(--text-lg, 18px);
+}
+
+.user-section-heading small,
+.user-section-heading--outside small {
+  color: var(--user-text-soft);
+}
+
+.latest-measurement-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.latest-measurement-card {
+  display: flex;
+  min-width: 0;
+  min-height: 130px;
+  flex-direction: column;
+  justify-content: center;
+  padding: 18px;
+  border: 1px solid var(--user-border);
+  border-radius: 14px;
+  background: var(--user-muted);
+}
+
+.latest-measurement-card > span,
+.latest-measurement-card p {
+  color: var(--user-text-soft);
+  font-size: var(--text-xs, 12px);
+}
+
+.latest-measurement-card strong {
+  margin: 8px 0 2px;
+  color: var(--user-text);
+  font-size: clamp(1.45rem, 2vw, 2rem);
+}
+
+.latest-measurement-card strong small {
+  font-size: var(--text-xs, 12px);
+  font-weight: 600;
+}
+
+.latest-measurement-card p {
+  margin: 0;
+}
+
+.user-empty-state {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 112px;
+  padding: 18px;
+  border: 1px dashed var(--user-border);
+  border-radius: 14px;
+  background: var(--user-muted);
+}
+
+.user-empty-state > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.user-empty-state strong {
+  color: var(--user-text);
+}
+
+.user-empty-state p {
+  margin: 5px 0 0;
+  color: var(--user-text-soft);
+  line-height: 1.6;
+}
+
+.user-empty-state__icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 15px;
+  color: var(--user-accent);
+  background: var(--user-soft);
+  font-weight: 800;
+}
+
+.user-empty-state--compact {
+  min-height: 150px;
+}
+
+.user-empty-state--page {
+  grid-column: 1 / -1;
+  justify-content: center;
+  min-height: 220px;
+}
+
+.next-appointment-card {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: 150px;
+  padding: 18px;
+  border: 1px solid var(--user-border);
+  border-radius: 16px;
+  background: var(--user-muted);
+}
+
+.next-appointment-card__date,
+.booking-record-card__date,
+.health-record-card__date {
+  display: grid;
+  width: 70px;
+  min-height: 76px;
+  flex: 0 0 auto;
+  place-content: center;
+  text-align: center;
+  border-radius: 16px;
+  color: var(--user-accent);
+  background: var(--user-soft);
+}
+
+.next-appointment-card__date strong,
+.booking-record-card__date strong,
+.health-record-card__date strong {
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.next-appointment-card__date span,
+.booking-record-card__date span,
+.health-record-card__date span {
+  margin-top: 6px;
+  font-size: var(--text-xs, 12px);
+}
+
+.next-appointment-card__body {
+  min-width: 0;
+}
+
+.next-appointment-card__body h4,
+.booking-record-card h4,
+.waitlist-card h4 {
+  margin: 9px 0 5px;
+  color: var(--user-text);
+  font-size: var(--text-base, 16px);
+}
+
+.next-appointment-card__body p,
+.booking-record-card p,
+.waitlist-card p {
+  margin: 0;
+  color: var(--user-text-soft);
+  line-height: 1.55;
+}
+
+.dashboard-journey-list {
+  display: grid;
+}
+
+.dashboard-journey-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 72px;
+  padding: 12px 4px;
+  border: 0;
+  border-bottom: 1px solid var(--user-border);
+  color: var(--user-text);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.dashboard-journey-item:last-child {
+  border-bottom: 0;
+}
+
+.dashboard-journey-item:hover .dashboard-journey-item__main strong {
+  color: var(--user-accent);
+}
+
+.dashboard-journey-item__marker {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--user-accent);
+  background: var(--user-soft);
+  font-weight: 760;
+}
+
+.dashboard-journey-item__main {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.dashboard-journey-item__main small,
+.dashboard-journey-item time {
+  color: var(--user-text-soft);
+}
+
+.measurement-drawer .el-drawer__body {
+  padding: 0 24px 32px;
+}
+
+.measurement-drawer__intro {
+  padding: 8px 0 22px;
+}
+
+.measurement-drawer__intro h2 {
+  margin: 7px 0 8px;
+  color: var(--color-text);
+  font-size: 1.55rem;
+  line-height: 1.3;
+}
+
+.measurement-form {
+  padding: 22px;
+  margin-top: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: var(--color-surface-muted);
+}
+
+.measurement-form__grid {
+  display: grid;
+  grid-template-columns: 0.8fr 1.2fr;
+  gap: 14px;
+}
+
+.measurement-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.measurement-recent {
+  margin-top: 28px;
+}
+
+.measurement-recent__list {
+  display: grid;
+  margin-top: 12px;
+}
+
+.measurement-recent__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.measurement-recent__item > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.measurement-recent__item > div:first-child span,
+.measurement-recent__item b small {
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs, 12px);
+}
+
+.measurement-recent__item b {
+  font-size: var(--text-lg, 18px);
+}
+
+.timeline-filter-card .el-card__body,
+.user-filter-panel .el-card__body {
+  display: grid;
+  gap: 18px;
+}
+
+.timeline-filter-grid,
+.health-data-filter-grid,
+.trend-filter-grid-platform {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.timeline-filter-grid .filter-field,
+.health-data-filter-grid .filter-field,
+.trend-filter-grid-platform .filter-field {
+  flex: 1 1 210px;
+}
+
+/* Element Plus gives range pickers an intrinsic width. Keep the picker inside
+   its flex item so it cannot paint over the following source filter. */
+.timeline-filter-grid .filter-field .el-date-editor,
+.health-data-filter-grid .filter-field .el-date-editor,
+.trend-filter-grid-platform .filter-field .el-date-editor {
+  width: 100% !important;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.timeline-filter-grid .filter-field .el-range-input,
+.health-data-filter-grid .filter-field .el-range-input,
+.trend-filter-grid-platform .filter-field .el-range-input {
+  min-width: 0;
+}
+
+.health-journey {
+  display: grid;
+  gap: 16px;
+}
+
+.health-journey-card {
+  display: grid;
+  grid-template-columns: 66px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--user-border);
+  border-radius: 18px;
+  background: var(--user-surface);
+}
+
+.health-journey-card__rail {
+  display: flex;
+  justify-content: center;
+  padding-top: 26px;
+  background: var(--user-muted);
+}
+
+.health-journey-card__rail span {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--user-accent);
+  background: var(--user-soft);
+  font-weight: 780;
+}
+
+.health-journey-card__content {
+  padding: 25px 28px;
+}
+
+.health-journey-card__content > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.health-journey-card__content time {
+  color: var(--user-text-soft);
+  font-size: var(--text-xs, 12px);
+}
+
+.health-journey-card__content h3 {
+  margin: 5px 0 0;
+  color: var(--user-text);
+  font-size: 1.15rem;
+}
+
+.health-journey-card__summary {
+  margin: 12px 0 18px;
+  color: var(--user-text-soft);
+}
+
+.journey-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 0;
+  margin: 20px 0;
+  list-style: none;
+}
+
+.journey-steps li {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  min-width: 0;
+}
+
+.journey-steps li::before {
+  position: absolute;
+  z-index: 0;
+  top: 7px;
+  right: 0;
+  left: 7px;
+  height: 2px;
+  background: var(--user-border);
+  content: "";
+}
+
+.journey-steps li:last-child::before {
+  display: none;
+}
+
+.journey-steps li > span {
+  position: relative;
+  z-index: 1;
+  width: 14px;
+  height: 14px;
+  border: 3px solid var(--user-surface);
+  border-radius: 50%;
+  background: var(--user-border);
+  box-shadow: 0 0 0 1px var(--user-border);
+}
+
+.journey-steps li.is-latest > span {
+  background: var(--user-accent);
+  box-shadow: 0 0 0 1px var(--user-accent);
+}
+
+.journey-steps li > div {
+  display: grid;
+  gap: 4px;
+  padding-right: 10px;
+}
+
+.journey-steps strong {
+  font-size: var(--text-sm, 14px);
+}
+
+.journey-steps small {
+  color: var(--user-text-soft);
+  font-size: 11px;
+}
+
+.journey-domain-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.journey-domain-list span,
+.health-record-card__domains span {
+  padding: 6px 10px;
+  border-radius: 99px;
+  color: var(--user-accent);
+  background: var(--user-soft);
+  font-size: var(--text-xs, 12px);
+  font-weight: 650;
+}
+
+.health-journey-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding-top: 18px;
+  margin-top: 18px;
+  border-top: 1px solid var(--user-border);
+}
+
+.health-journey-card__footer p {
+  margin: 0;
+  color: var(--user-text-soft);
+}
+
+.user-pagination {
+  display: flex;
+  justify-content: center;
+  padding: 6px 0;
+}
+
+.health-record-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.health-record-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 24px;
+  border: 1px solid var(--user-border);
+  border-radius: 18px;
+  background: var(--user-surface);
+}
+
+.health-record-card > header {
+  display: flex;
+  gap: 16px;
+}
+
+.health-record-card__heading {
+  min-width: 0;
+}
+
+.health-record-card__heading h3 {
+  margin: 9px 0 5px;
+  color: var(--user-text);
+  font-size: 1.1rem;
+}
+
+.health-record-card__heading p {
+  margin: 0;
+  color: var(--user-text-soft);
+  line-height: 1.5;
+}
+
+.health-record-card__domains {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 20px 0;
+}
+
+.health-record-card__counts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--user-muted);
+}
+
+.health-record-card__counts > div {
+  display: grid;
+  gap: 4px;
+}
+
+.health-record-card__counts strong {
+  color: var(--user-text);
+  font-size: var(--text-lg, 18px);
+}
+
+.health-record-card__counts span {
+  color: var(--user-text-soft);
+  font-size: var(--text-xs, 12px);
+}
+
+.health-record-card > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding-top: 18px;
+  margin-top: auto;
+}
+
+.health-record-card > footer > span {
+  color: var(--user-text-soft);
+  font-size: var(--text-xs, 12px);
+}
+
+.health-detail-hero {
+  padding: 26px 32px 32px;
+  border: 1px solid var(--user-border);
+  border-radius: 20px;
+  background: linear-gradient(135deg, var(--user-surface), var(--user-soft));
+}
+
+.health-detail-hero__back {
+  margin: -6px 0 18px -10px;
+}
+
+.health-detail-hero__content {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 26px;
+}
+
+.health-detail-hero__content > div:first-child > p {
+  margin: 0;
+  color: var(--user-text-soft);
+}
+
+.health-detail-hero__summary {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.health-detail-hero__summary > div {
+  display: grid;
+  gap: 3px;
+  min-width: 74px;
+}
+
+.health-detail-hero__summary strong {
+  font-size: 1.65rem;
+}
+
+.health-detail-hero__summary span {
+  color: var(--user-text-soft);
+  font-size: var(--text-xs, 12px);
+}
+
+.health-domain-sections {
+  display: grid;
+  gap: 16px;
+}
+
+.health-domain-card {
+  padding: 0 26px 10px;
+  border: 1px solid var(--user-border);
+  border-radius: 18px;
+  background: var(--user-surface);
+}
+
+.health-domain-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--user-border);
+}
+
+.health-domain-card__header h3 {
+  margin: 4px 0 0;
+  color: var(--user-text);
+}
+
+.health-domain-card__header small {
+  color: var(--user-text-soft);
+}
+
+.health-indicator-list {
+  display: grid;
+}
+
+.health-indicator-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(130px, auto) auto auto;
+  align-items: center;
+  gap: 18px;
+  min-height: 76px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--user-border);
+}
+
+.health-indicator-row__name {
+  display: grid;
+  gap: 4px;
+}
+
+.health-indicator-row__name span,
+.health-indicator-row__value span {
+  color: var(--user-text-soft);
+  font-size: var(--text-xs, 12px);
+}
+
+.health-indicator-row__value {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.health-indicator-row__value strong {
+  font-size: 1.25rem;
+}
+
+.health-conclusion-card {
+  padding: 20px;
+  margin: 18px 0;
+  border-left: 4px solid var(--user-accent);
+  border-radius: 0 12px 12px 0;
+  background: var(--user-muted);
+}
+
+.health-conclusion-card h4 {
+  margin: 5px 0 8px;
+}
+
+.health-conclusion-card p {
+  margin: 0;
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+
+.health-asset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  padding: 18px 0;
+}
+
+.health-asset-grid > article,
+.trend-asset-list > button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--user-border);
+  border-radius: 13px;
+  color: var(--user-text);
+  background: var(--user-muted);
+}
+
+.health-asset-grid__icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 12px;
+  color: var(--user-accent);
+  background: var(--user-soft);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.health-asset-grid p {
+  margin: 4px 0 0;
+  color: var(--user-text-soft);
+}
+
+.trend-story-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.trend-story-card {
+  min-width: 0;
+  padding: 24px;
+  border: 1px solid var(--user-border);
+  border-radius: 18px;
+  background: var(--user-surface);
+}
+
+.trend-story-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--user-border);
+}
+
+.trend-story-card > header h3 {
+  margin: 4px 0 0;
+}
+
+.trend-story-card > header > small {
+  padding: 5px 9px;
+  border-radius: 99px;
+  color: var(--user-text-soft);
+  background: var(--user-muted);
+}
+
+.trend-source-story {
+  padding-top: 20px;
+}
+
+.trend-source-story + .trend-source-story {
+  padding-top: 24px;
+  margin-top: 22px;
+  border-top: 1px dashed var(--user-border);
+}
+
+.trend-source-story__heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 18px;
+}
+
+.trend-source-story__heading > div {
+  display: grid;
+  gap: 3px;
+}
+
+.trend-source-story__heading > div > span {
+  color: var(--user-text-soft);
+  font-size: 11px;
+}
+
+.trend-source-story__heading strong.is-up,
+.trend-source-story__heading strong.is-down,
+.trend-source-story__heading strong.is-steady {
+  color: var(--user-text);
+}
+
+.trend-chart-platform {
+  margin-top: 12px;
+}
+
+.trend-chart-platform svg {
+  width: 100%;
+  height: 160px;
+  overflow: visible;
+}
+
+.trend-chart-platform__axis {
+  stroke: var(--user-border);
+  stroke-width: 1;
+}
+
+.trend-chart-platform__guide {
+  stroke: var(--user-border);
+  stroke-dasharray: 4 5;
+  stroke-width: 1;
+}
+
+.trend-chart-platform__line {
+  fill: none;
+  stroke: var(--user-accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.trend-chart-platform__point {
+  fill: var(--user-surface);
+  stroke: var(--user-accent);
+  stroke-width: 2.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.trend-chart-platform__range {
+  display: flex;
+  justify-content: space-between;
+  color: var(--user-text-soft);
+  font-size: 11px;
+}
+
+.trend-asset-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.trend-asset-list > button {
+  cursor: pointer;
+  text-align: left;
+}
+
+.trend-asset-list > button > span:nth-child(2) {
+  display: grid;
+  gap: 4px;
+}
+
+.trend-asset-list small {
+  color: var(--user-text-soft);
+}
+
+.booking-flow-card > .el-card__body {
+  padding: 28px 34px 30px;
+}
+
+.booking-steps {
+  max-width: 900px;
+  margin: 0 auto 34px;
+}
+
+.booking-step-panel {
+  max-width: 980px;
+  min-height: 390px;
+  margin: 0 auto;
+}
+
+.booking-step-heading {
+  max-width: 720px;
+  margin-bottom: 26px;
+}
+
+.booking-step-heading h3 {
+  margin: 6px 0 7px;
+  color: var(--user-text);
+  font-size: 1.35rem;
+}
+
+.booking-institution-grid,
+.booking-package-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.booking-choice-card,
+.booking-package-choice {
+  position: relative;
+  display: flex;
+  min-height: 178px;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 20px;
+  border: 1px solid var(--user-border);
+  border-radius: 16px;
+  color: var(--user-text);
+  background: var(--user-surface);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.booking-choice-card:hover,
+.booking-choice-card.is-selected,
+.booking-package-choice:hover,
+.booking-package-choice.is-selected {
+  border-color: var(--user-accent);
+  background: color-mix(in srgb, var(--user-soft) 64%, var(--user-surface));
+}
+
+.booking-choice-card.is-disabled {
+  opacity: 0.64;
+}
+
+.booking-choice-card__check {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 16px;
+  place-items: center;
+  border-radius: 11px;
+  color: var(--user-accent);
+  background: var(--user-soft);
+  font-weight: 800;
+}
+
+.booking-choice-card strong,
+.booking-package-choice h4 {
+  font-size: var(--text-base, 16px);
+}
+
+.booking-choice-card small,
+.booking-package-choice > p,
+.booking-package-choice > small {
+  margin-top: 5px;
+  color: var(--user-text-soft);
+}
+
+.booking-choice-card p {
+  margin: auto 0 0;
+  color: var(--user-accent);
+  font-size: var(--text-xs, 12px);
+}
+
+.booking-package-choice {
+  min-height: 250px;
+}
+
+.booking-package-choice > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+
+.booking-package-choice > div:first-child > strong {
+  font-size: var(--text-lg, 18px);
+}
+
+.booking-package-choice h4 {
+  margin: 18px 0 2px;
+}
+
+.booking-package-choice .journey-domain-list {
+  margin: 16px 0;
+}
+
+.booking-review-card {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 18px;
+  margin-bottom: 18px;
+  border: 1px solid var(--user-border);
+  border-radius: 15px;
+  background: var(--user-muted);
+}
+
+.booking-review-card > div {
+  display: grid;
+  gap: 5px;
+}
+
+.booking-review-card span {
+  color: var(--user-text-soft);
+  font-size: var(--text-xs, 12px);
+}
+
+.booking-notice-check {
+  margin: 16px 0 !important;
+  white-space: normal;
+}
+
+.booking-flow-actions {
+  display: flex;
+  gap: 10px;
+  padding-top: 24px;
+  margin-top: 24px;
+  border-top: 1px solid var(--user-border);
+}
+
+.booking-flow-actions > span {
+  flex: 1;
+}
+
+.booking-management-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(330px, 0.75fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.booking-record-list,
+.waitlist-card-list {
+  display: grid;
+}
+
+.booking-record-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 112px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--user-border);
+}
+
+.booking-record-card:last-child,
+.waitlist-card:last-child {
+  border-bottom: 0;
+}
+
+.booking-record-card__body {
+  min-width: 0;
+}
+
+.booking-record-card__body .el-tag + .el-tag {
+  margin-left: 5px;
+}
+
+.booking-record-card__body small {
+  display: block;
+  margin-top: 7px;
+  color: var(--user-text-soft);
+}
+
+.waitlist-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 106px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--user-border);
+}
+
+.institution-back-button {
+  justify-self: start;
+}
+
+.institution-profile-hero {
+  position: relative;
+  min-height: 410px;
+  overflow: hidden;
+  border-radius: 22px;
+  background: var(--user-muted);
+}
+
+.institution-profile-hero .institution-cover {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.institution-profile-hero .institution-cover img,
+.institution-profile-hero .institution-cover-placeholder {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.institution-profile-hero__overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgb(12 34 36 / 80%), rgb(12 34 36 / 24%) 70%, transparent);
+}
+
+.institution-profile-hero__content {
+  position: absolute;
+  z-index: 2;
+  right: 42px;
+  bottom: 42px;
+  left: 42px;
+  max-width: 720px;
+  color: #fff;
+}
+
+.institution-profile-hero__content h2 {
+  color: #fff;
+  font-size: clamp(2rem, 3.8vw, 3.3rem);
+}
+
+.institution-profile-hero__content p {
+  margin: 0;
+  color: rgb(255 255 255 / 78%);
+  font-size: var(--text-base, 16px);
+}
+
+.institution-profile-hero__actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.institution-info-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.institution-info-card {
+  min-width: 0;
+  padding: 22px;
+  border: 1px solid var(--user-border);
+  border-radius: 16px;
+  background: var(--user-surface);
+}
+
+.institution-info-card strong {
+  display: block;
+  margin: 8px 0;
+  color: var(--user-text);
+  font-size: var(--text-base, 16px);
+  line-height: 1.5;
+}
+
+.institution-info-card p,
+.institution-about-card p {
+  margin: 0;
+  color: var(--user-text-soft);
+  line-height: 1.65;
+}
+
+.institution-package-section {
+  scroll-margin-top: 96px;
+}
+
+.user-section-heading--outside {
+  margin: 10px 2px 16px;
+}
+
+.institution-package-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.institution-package-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 26px;
+  border: 1px solid var(--user-border);
+  border-radius: 18px;
+  background: var(--user-surface);
+}
+
+.institution-package-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.institution-package-card > header > span {
+  color: var(--user-text-soft);
+  font-size: var(--text-xs, 12px);
+}
+
+.institution-package-card h4 {
+  margin: 20px 0 7px;
+  color: var(--user-text);
+  font-size: 1.25rem;
+}
+
+.institution-package-card > p {
+  min-height: 50px;
+  margin: 0 0 16px;
+  color: var(--user-text-soft);
+  line-height: 1.65;
+}
+
+.institution-package-card dl {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  margin: 20px 0;
+  border-radius: 14px;
+  background: var(--user-muted);
+}
+
+.institution-package-card dl > div {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.institution-package-card dt {
+  color: var(--user-text-soft);
+}
+
+.institution-package-card dd {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.institution-package-card > footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: auto;
+}
+
+.institution-package-card > footer > div {
+  display: grid;
+  gap: 2px;
+}
+
+.institution-package-card > footer small {
+  color: var(--user-text-soft);
+}
+
+.institution-package-card > footer strong {
+  color: var(--user-accent);
+  font-size: 1.8rem;
+}
+
+.institution-review-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.7fr) minmax(0, 1.3fr);
+  gap: 30px;
+}
+
+.institution-review-form {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 22px;
+  border-radius: 16px;
+  background: var(--user-muted);
+}
+
+.institution-review-form h4,
+.institution-review-form p {
+  margin: 0;
+}
+
+.institution-review-form p {
+  color: var(--user-text-soft);
+  line-height: 1.6;
+}
+
+.institution-review-form .el-button {
+  justify-self: start;
+}
+
+.institution-review-list {
+  display: grid;
+}
+
+.institution-review-card {
+  padding: 18px 0;
+  border-bottom: 1px solid var(--user-border);
+}
+
+.institution-review-card:first-child {
+  padding-top: 0;
+}
+
+.institution-review-card > header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.institution-review-card__avatar {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--user-accent);
+  background: var(--user-soft);
+  font-weight: 780;
+}
+
+.institution-review-card > header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.institution-review-card time {
+  color: var(--user-text-soft);
+  font-size: var(--text-xs, 12px);
+}
+
+.institution-review-card > p {
+  margin: 14px 0 0 54px;
+  line-height: 1.7;
+}
+
+@media (max-width: 1180px) {
+  .latest-measurement-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .booking-institution-grid,
+  .booking-package-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .user-hero,
+  .user-dashboard-grid,
+  .booking-management-grid,
+  .institution-review-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .user-hero__today {
+    align-self: stretch;
+  }
+
+  .health-record-grid,
+  .trend-story-grid,
+  .institution-package-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .journey-steps {
+    grid-template-columns: 1fr 1fr;
+    gap: 18px 6px;
+  }
+
+  .journey-steps li::before {
+    display: none;
+  }
+
+  .health-detail-hero__content,
+  .health-detail-hero__summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .institution-info-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .user-page-lead {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .user-page-lead .el-button,
+  .user-hero__actions .el-button {
+    width: 100%;
+  }
+
+  .user-hero {
+    grid-template-columns: 1fr;
+    min-height: 0;
+    padding: 28px 22px;
+  }
+
+  .user-hero__actions,
+  .institution-profile-hero__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .latest-measurement-grid,
+  .booking-institution-grid,
+  .booking-package-grid,
+  .booking-review-card,
+  .trend-asset-list {
+    grid-template-columns: 1fr;
+  }
+
+  .user-empty-state {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .dashboard-journey-item {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .dashboard-journey-item time {
+    display: none;
+  }
+
+  .measurement-form__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .measurement-recent__item {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .measurement-recent__actions {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+
+  .timeline-filter-grid,
+  .health-data-filter-grid,
+  .trend-filter-grid-platform {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .timeline-filter-grid .filter-field,
+  .health-data-filter-grid .filter-field,
+  .trend-filter-grid-platform .filter-field,
+  .timeline-filter-grid .filter-actions,
+  .health-data-filter-grid .filter-actions,
+  .trend-filter-grid-platform .filter-actions {
+    width: 100%;
+  }
+
+  .health-journey-card {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .health-journey-card__rail {
+    padding-top: 21px;
+  }
+
+  .health-journey-card__rail span {
+    width: 30px;
+    height: 30px;
+    font-size: 12px;
+  }
+
+  .health-journey-card__content {
+    padding: 20px 16px;
+  }
+
+  .health-journey-card__content > header,
+  .health-journey-card__footer,
+  .health-record-card > footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .health-record-card {
+    padding: 18px;
+  }
+
+  .health-record-card__counts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .health-detail-hero {
+    padding: 22px 18px;
+  }
+
+  .health-indicator-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+
+  .health-indicator-row .el-tag,
+  .health-indicator-row .el-button {
+    justify-self: end;
+  }
+
+  .trend-source-story__heading {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .trend-source-story__heading > .el-tag {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .booking-flow-card > .el-card__body {
+    padding: 22px 16px;
+  }
+
+  .booking-steps .el-step__title {
+    font-size: 11px;
+  }
+
+  .booking-record-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .booking-record-card > .el-button {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .institution-profile-hero {
+    min-height: 480px;
+  }
+
+  .institution-profile-hero__overlay {
+    background: linear-gradient(0deg, rgb(12 34 36 / 88%), rgb(12 34 36 / 16%));
+  }
+
+  .institution-profile-hero__content {
+    right: 22px;
+    bottom: 26px;
+    left: 22px;
+  }
+
+  .institution-package-card {
+    padding: 20px;
+  }
+
+  .institution-package-card dl > div {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .institution-review-card > header {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .institution-review-card time {
+    grid-column: 2;
+  }
+
+  .institution-review-card > p {
+    margin-left: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .booking-choice-card,
+  .booking-package-choice {
+    transition: none;
+  }
+}

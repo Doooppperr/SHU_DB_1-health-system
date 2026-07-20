@@ -6,9 +6,9 @@ export function buildRegistrationPayload(mode, form) {
     captcha_answer: String(form.captcha_answer || "").trim(),
   };
 
-  const email = String(form.email || "").trim();
+  const email = String(form.email || "").trim().toLowerCase();
   const phone = String(form.phone || "").trim();
-  if (email) payload.email = email;
+  payload.email = email;
   if (phone) payload.phone = phone;
 
   if (mode === "staff") {

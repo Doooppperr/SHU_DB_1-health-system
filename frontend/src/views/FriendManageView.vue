@@ -46,6 +46,7 @@
                 </el-tag>
               </template>
             </el-table-column>
+            <el-table-column label="代预约" width="120"><template #default="scope"><el-tag :type="scope.row.booking_auth_status?'success':'info'">{{scope.row.booking_auth_status?'已授权':'未授权'}}</el-tag></template></el-table-column>
             <el-table-column label="操作" width="180">
               <template #default="scope">
                 <el-button type="primary" link @click="renameRelation(scope.row)">改名</el-button>
@@ -63,7 +64,7 @@
           <el-table :data="incoming" border empty-text="暂无被添加关系">
             <el-table-column prop="user.username" label="请求方用户名" min-width="150" />
             <el-table-column prop="relation_name" label="对方关系名" min-width="140" />
-            <el-table-column label="授权开关" width="140">
+            <el-table-column label="查看健康数据" width="140">
               <template #default="scope">
                 <el-switch
                   :model-value="scope.row.auth_status"
@@ -73,6 +74,7 @@
                 />
               </template>
             </el-table-column>
+            <el-table-column label="代为预约" width="140"><template #default="scope"><el-switch :model-value="scope.row.booking_auth_status" @change="(value)=>changeBookingAuthorization(scope.row,value)"/></template></el-table-column>
             <el-table-column label="操作" width="120">
               <template #default="scope">
                 <el-button type="danger" link @click="removeRelation(scope.row)">删除</el-button>
@@ -97,6 +99,7 @@ import {
   fetchFriends,
   renameFriend,
   updateFriendAuthorization,
+  updateBookingAuthorization,
 } from "../api/friends";
 import { useAuthStore } from "../stores/auth";
 
@@ -186,6 +189,7 @@ const changeAuthorization = async (row, authStatus) => {
     await loadFriends();
   }
 };
+const changeBookingAuthorization = async (row, value) => { try { await updateBookingAuthorization(row.id,{booking_auth_status:value}); ElMessage.success(value?'已允许对方代为预约':'已撤销代预约权限'); await loadFriends(); } catch(error){ ElMessage.error(error?.response?.data?.message||'代预约授权更新失败'); await loadFriends(); } };
 
 const removeRelation = async (row) => {
   try {

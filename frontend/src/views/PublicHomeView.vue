@@ -40,7 +40,7 @@
           </div>
           <div class="portal-trust-row">
             <span>✓ 档案分级授权</span>
-            <span>✓ 报告鉴权访问</span>
+            <span>✓ 检查资料受控查看</span>
             <span>✓ 三角色权限隔离</span>
           </div>
         </div>
@@ -62,7 +62,7 @@
             </div>
           </div>
           <div class="portal-product-notes" aria-label="产品能力摘要">
-            <span><b>OCR</b> 机构识别并人工复核</span>
+            <span><b>导入</b> 识别结果由机构人工确认</span>
             <span><b>趋势</b> 同口径指标持续追踪</span>
             <span><b>隐私</b> 数据开放边界清晰</span>
           </div>
@@ -111,7 +111,7 @@
         <div class="portal-privacy-list">
           <div><span>01</span><p><strong>角色隔离</strong><small>用户、机构管理员与系统管理员拥有独立工作台和接口。</small></p></div>
           <div><span>02</span><p><strong>最小开放</strong><small>机构只管理自己创建的报告，管理员不接触任何健康内容。</small></p></div>
-          <div><span>03</span><p><strong>报告保护</strong><small>用户只读查看标准化指标，OCR 原文件在机构锁定时删除。</small></p></div>
+          <div><span>03</span><p><strong>报告保护</strong><small>用户查看机构确认后的健康数据，导入原文件在复核完成后删除。</small></p></div>
         </div>
       </section>
 
@@ -145,9 +145,9 @@ const router = useRouter();
 const authStore = useAuthStore();
 const chartBars = [34, 48, 42, 63, 56, 76, 68, 83, 74, 91];
 const features = [
-  { icon: "线", title: "健康时间线", description: "统一查看机构自动归档的体检报告和每一条日常测量。", note: "统一视图 · 来源清晰" },
-  { icon: "OCR", title: "机构报告生产", description: "机构通过 OCR 或手工录入，复核锁定后自动归档给注册用户。", note: "机构负责 · 用户只读" },
-  { icon: "趋", title: "指标趋势", description: "同日机构指标优先，缺失时采用用户当天最后一次自测。", note: "确定规则 · 原始值保留" },
+  { icon: "线", title: "健康时间线", description: "一次体检一条记录，展开查看预约、到检与健康数据归档历程。", note: "业务日期 · 历程清晰" },
+  { icon: "导", title: "机构健康数据归档", description: "机构可导入体检报告并识别，或直接录入结果；人工确认后归档给用户。", note: "机构负责 · 用户只读" },
+  { icon: "趋", title: "健康趋势", description: "按健康领域查看多指标独立图表、机构来源分轨和检查附件事件。", note: "来源分轨 · 不造综合分" },
   { icon: "友", title: "亲友授权", description: "授权亲友只读查看健康数据，个人资料始终隐藏。", note: "可控授权 · 清晰边界" },
 ];
 const steps = [

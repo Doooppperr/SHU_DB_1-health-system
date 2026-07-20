@@ -1,0 +1,326 @@
+from datetime import date, datetime, timedelta, timezone
+import uuid
+from zoneinfo import ZoneInfo
+
+from flask import g, request
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
+
+from app.booking_v7 import booking_v7_bp
+from app.extensions import db
+from app.models import (
+    Appointment, AppointmentCapacitySlot, AppointmentEvent, BookingGroup,
+    FriendRelation, Institution, NotificationOutbox, Package, PackageVersion,
+    PackageVersionDomain, User, WaitlistSubscription,
+    WaitlistSubscriptionParticipant, AvailabilityNotificationEvent,
+)
+from app.services.domain_rules import current_package_version
+from app.services.permissions import ROLE_USER, roles_required
+
+
+ACTIVE_STATUSES = ("unfulfilled", "awaiting_report", "fulfilled")
+BUSINESS_TZ = ZoneInfo("Asia/Shanghai")
+STATUS_LABELS = {
+    "unfulfilled": "预约成功",
+    "awaiting_report": "等待健康数据",
+    "fulfilled": "已完成",
+    "invalidated": "已失效",
+    "cancelled": "已取消",
+}
+
+
+def _parse_day(raw):
+    try: day = date.fromisoformat(str(raw))
+    except (TypeError, ValueError): return None, ({"message": "appointment_date must be YYYY-MM-DD"}, 400)
+    today = datetime.now(BUSINESS_TZ).date()
+    if day < today or day > today + timedelta(days=30):
+        return None, ({"message": "appointments are available from today through the next 30 days"}, 400)
+    return day, None
+
+
+def _booked(institution_id, day):
+    return Appointment.query.filter(Appointment.institution_id == institution_id,
+                                    Appointment.appointment_date == day,
+                                    Appointment.status.in_(ACTIVE_STATUSES)).count()
+
+
+def _lock_capacity(institution, day):
+    db.session.execute(update(Institution).where(Institution.id == institution.id).values(
+        daily_appointment_limit=Institution.daily_appointment_limit).execution_options(synchronize_session=False))
+    db.session.refresh(institution)
+    slot = AppointmentCapacitySlot.query.filter_by(institution_id=institution.id, appointment_date=day).first()
+    if slot is None:
+        slot = AppointmentCapacitySlot(institution_id=institution.id, appointment_date=day,
+                                       capacity=institution.daily_appointment_limit, revision=0)
+        db.session.add(slot); db.session.flush()
+    elif slot.capacity != institution.daily_appointment_limit:
+        slot.capacity = institution.daily_appointment_limit; slot.revision += 1
+    return slot
+
+
+def _remaining(institution, day):
+    return None if institution.daily_appointment_limit is None else max(institution.daily_appointment_limit - _booked(institution.id, day), 0)
+
+
+def _participants(booker, raw_ids):
+    if raw_ids is None: raw_ids = [booker.id]
+    if not isinstance(raw_ids, list): return None, ({"message": "participant_user_ids must be an array"}, 400)
+    try: ids = [int(value) for value in raw_ids]
+    except (TypeError, ValueError): return None, ({"message": "participant_user_ids must contain integers"}, 400)
+    if not 1 <= len(ids) <= 5: return None, ({"message": "booking group must contain between 1 and 5 participants"}, 400)
+    if len(set(ids)) != len(ids): return None, ({"message": "participants must be unique"}, 400)
+    users = {row.id: row for row in User.query.filter(User.id.in_(ids), User.role == "user", User.is_active.is_(True)).all()}
+    if set(users) != set(ids): return None, ({"message": "all participants must be active registered users"}, 400)
+    authorized_at = {}
+    for subject_id in ids:
+        if subject_id == booker.id:
+            authorized_at[subject_id] = datetime.now(timezone.utc); continue
+        relation = FriendRelation.query.filter_by(user_id=booker.id, friend_user_id=subject_id,
+                                                   booking_auth_status=True).first()
+        if not relation:
+            return None, ({"message": f"booking authorization required for participant {subject_id}"}, 403)
+        authorized_at[subject_id] = relation.booking_authorized_at or relation.created_at
+    return [(users[user_id], authorized_at[user_id]) for user_id in ids], None
+
+
+def _package(institution_id, package_id):
+    package = Package.query.filter_by(id=package_id, institution_id=institution_id, is_active=True).first()
+    if not package: return None, None, ({"message": "active approved package not found"}, 404)
+    version = current_package_version(package)
+    if not version: return None, None, ({"message": "package has no approved version"}, 409)
+    domains = [row.domain.to_dict() for row in version.domains if row.domain]
+    if (version.package_type == "special" and len(domains) != 1) or (version.package_type == "combined" and len(domains) < 2):
+        return None, None, ({"message": "package version has an invalid domain definition"}, 409)
+    return package, version, domains
+
+
+def _group_payload(row):
+    payload = row.to_dict()
+    institution = db.session.get(Institution, row.institution_id)
+    package = db.session.get(Package, row.package_id)
+    statuses = []
+    for appointment in row.appointments:
+        if appointment.status not in statuses:
+            statuses.append(appointment.status)
+    payload.update({
+        "institution": ({"id": institution.id, "name": institution.name,
+                         "branch_name": institution.branch_name} if institution else None),
+        "package": ({"id": package.id, "name": row.package_name_snapshot or package.name,
+                     "domains": row.domain_snapshot or []} if package else None),
+        "participant_names": [appointment.user_name_snapshot for appointment in row.appointments],
+        "status_codes": statuses,
+        "status_labels": [STATUS_LABELS.get(status, status) for status in statuses],
+        "can_cancel": bool(row.appointments) and all(item.status == "unfulfilled" for item in row.appointments),
+    })
+    return payload
+
+
+def _waitlist_payload(row):
+    payload = row.to_dict()
+    institution = db.session.get(Institution, row.institution_id)
+    package = db.session.get(Package, row.package_id)
+    latest_event = AvailabilityNotificationEvent.query.filter_by(subscription_id=row.id).order_by(
+        AvailabilityNotificationEvent.created_at.desc(), AvailabilityNotificationEvent.id.desc()
+    ).first()
+    payload.update({
+        "institution": ({"id": institution.id, "name": institution.name,
+                         "branch_name": institution.branch_name} if institution else None),
+        "package": ({"id": package.id, "name": package.name} if package else None),
+        "status_label": {"active": "等待可预约提醒", "closed": "已完成预约",
+                         "cancelled": "已取消", "invalid": "已失效"}.get(row.status, row.status),
+        "last_notification": ({"sent_at": latest_event.created_at.isoformat(),
+                               "remaining": latest_event.remaining_snapshot} if latest_event else None),
+        "notice": "空位提醒不会保留名额，收到提醒后仍需重新提交预约。",
+    })
+    return payload
+
+
+def _reset_unsatisfied(institution_id, day, remaining):
+    if remaining is None: return
+    for row in WaitlistSubscription.query.filter_by(institution_id=institution_id, appointment_date=day, status="active").all():
+        if remaining < row.party_size: row.last_satisfied_revision = None
+
+
+def enqueue_available(institution, day, slot):
+    remaining = _remaining(institution, day)
+    if remaining is None: remaining = 999999
+    for sub in WaitlistSubscription.query.filter_by(institution_id=institution.id, appointment_date=day, status="active").all():
+        if remaining < sub.party_size:
+            sub.last_satisfied_revision = None
+            continue
+        if sub.last_satisfied_revision is not None:
+            continue
+        valid = True
+        for participant in sub.participants:
+            user = db.session.get(User, participant.subject_user_id)
+            if not user or not user.is_active:
+                valid = False; break
+            if Appointment.query.filter_by(user_id=user.id, active_date_key=day).first():
+                valid = False; break
+            if user.id != sub.subscriber_user_id and not FriendRelation.query.filter_by(
+                user_id=sub.subscriber_user_id, friend_user_id=user.id, booking_auth_status=True).first():
+                valid = False; break
+        if not valid:
+            sub.status = "invalid"; sub.closed_at = datetime.now(timezone.utc); continue
+        event = AvailabilityNotificationEvent(subscription_id=sub.id, capacity_revision=slot.revision,
+                                              remaining_snapshot=remaining)
+        db.session.add(event)
+        key = f"waitlist:{sub.id}:revision:{slot.revision}"
+        db.session.add(NotificationOutbox(event_type="waitlist_available", idempotency_key=key,
+            recipient=sub.notification_email, payload={"subscription_id": sub.id,
+                "institution": institution.name, "branch": institution.branch_name,
+                "appointment_date": day.isoformat(), "party_size": sub.party_size,
+                "message": "名额先到先得，本邮件不代表预约成功或已经保留名额。", "login_url": "/login"}))
+        sub.last_satisfied_revision = slot.revision
+
+
+@booking_v7_bp.get("/booking-groups")
+@roles_required(ROLE_USER)
+def groups():
+    rows = BookingGroup.query.filter_by(booked_by_user_id=g.current_user.id).order_by(
+        BookingGroup.appointment_date.desc(), BookingGroup.id.desc()).all()
+    return {"items": [_group_payload(row) for row in rows]}, 200
+
+
+@booking_v7_bp.post("/booking-groups")
+@roles_required(ROLE_USER)
+def create_group():
+    payload = request.get_json(silent=True) or {}
+    day, error = _parse_day(payload.get("appointment_date"))
+    if error: return error
+    try: institution_id, package_id = int(payload.get("institution_id")), int(payload.get("package_id"))
+    except (TypeError, ValueError): return {"message": "institution_id and package_id must be integers"}, 400
+    institution = Institution.query.filter_by(id=institution_id, is_active=True).first()
+    if not institution: return {"message": "institution not found"}, 404
+    package, version, result = _package(institution.id, package_id)
+    if package is None: return result
+    domain_snapshot = result
+    participants, error = _participants(g.current_user, payload.get("participant_user_ids"))
+    if error: return error
+    confirmed = payload.get("notice_confirmed") is True
+    if version.booking_notice_snapshot and not confirmed:
+        return {"message": "package booking notice must be confirmed"}, 400
+    slot = _lock_capacity(institution, day)
+    remaining = _remaining(institution, day)
+    if remaining is not None and remaining < len(participants):
+        db.session.rollback()
+        return {"message": "剩余名额不足以容纳整个预约组", "code": "APPOINTMENT_FULL",
+                "remaining": remaining, "party_size": len(participants)}, 409
+    group = BookingGroup(group_code=f"BG-{uuid.uuid4().hex[:12].upper()}", booked_by_user_id=g.current_user.id,
+        institution_id=institution.id, package_id=package.id, package_version_id=version.id,
+        appointment_date=day, party_size=len(participants), package_name_snapshot=version.name_snapshot,
+        package_price_snapshot=version.price_snapshot, domain_snapshot=domain_snapshot,
+        booking_notice_snapshot=version.booking_notice_snapshot, notice_version_snapshot=version.version_number,
+        notice_confirmed_at=datetime.now(timezone.utc), contact_snapshot={"email": g.current_user.email, "phone": g.current_user.phone})
+    db.session.add(group); db.session.flush()
+    now = datetime.now(timezone.utc)
+    for user, _authorized_at in participants:
+        appointment = Appointment(user_id=user.id, booked_by_user_id=g.current_user.id,
+            booking_group_id=group.id, institution_id=institution.id, package_id=package.id,
+            package_version_id=version.id, appointment_date=day, active_date_key=day, status="unfulfilled",
+            user_name_snapshot=user.real_name or user.username, user_health_id_snapshot=user.health_id,
+            user_birth_date_snapshot=user.birth_date, user_gender_snapshot=user.gender,
+            user_contact_snapshot=user.phone or user.email, package_name_snapshot=version.name_snapshot,
+            package_price_snapshot=version.price_snapshot)
+        db.session.add(appointment); db.session.flush()
+        db.session.add(AppointmentEvent(appointment_id=appointment.id, event_type="booked",
+                                        status_snapshot="unfulfilled", message="预约成功",
+                                        actor_user_id=g.current_user.id, occurred_at=now))
+    slot.revision += 1
+    after = _remaining(institution, day)
+    _reset_unsatisfied(institution.id, day, after)
+    recipient = institution.notification_email or next((admin.email for admin in institution.administrators if admin.email), None)
+    if institution.notification_enabled and recipient:
+        db.session.add(NotificationOutbox(event_type="booking_group_created",
+            idempotency_key=f"booking-group:{group.id}:created", recipient=recipient,
+            payload={"group_code": group.group_code, "institution": institution.name,
+                     "appointment_date": day.isoformat(), "package": version.name_snapshot,
+                     "party_size": len(participants), "login_url": "/login"}))
+        if remaining is not None and remaining > 0 and after == 0:
+            db.session.add(NotificationOutbox(event_type="appointment_date_full",
+                idempotency_key=f"institution:{institution.id}:date:{day.isoformat()}:full:{slot.revision}",
+                recipient=recipient, payload={"institution": institution.name,
+                    "appointment_date": day.isoformat(), "message": "该日期预约名额已满", "login_url": "/login"}))
+    participant_ids = {user.id for user, _ in participants}
+    for sub in WaitlistSubscription.query.filter_by(subscriber_user_id=g.current_user.id,
+            institution_id=institution.id, package_id=package.id, appointment_date=day,
+            party_size=len(participants), status="active").all():
+        if {row.subject_user_id for row in sub.participants} == participant_ids:
+            sub.status = "closed"; sub.closed_at = now
+    try: db.session.commit()
+    except IntegrityError:
+        db.session.rollback(); return {"message": "预约组创建冲突；组内任一受检者已有当日有效预约"}, 409
+    return {"item": _group_payload(group)}, 201
+
+
+@booking_v7_bp.post("/booking-groups/<int:group_id>/cancel")
+@roles_required(ROLE_USER)
+def cancel_group(group_id):
+    group = BookingGroup.query.filter_by(id=group_id, booked_by_user_id=g.current_user.id).first()
+    if not group: return {"message": "booking group not found"}, 404
+    if any(row.status != "unfulfilled" for row in group.appointments):
+        return {"message": "only a wholly unfulfilled booking group can be cancelled"}, 409
+    institution = db.session.get(Institution, group.institution_id)
+    now = datetime.now(timezone.utc)
+    for row in group.appointments:
+        row.status = "cancelled"; row.active_date_key = None; row.cancelled_at = now
+        db.session.add(AppointmentEvent(appointment_id=row.id, event_type="cancelled",
+            status_snapshot="cancelled", message="预约组已取消", actor_user_id=g.current_user.id, occurred_at=now))
+    slot = _lock_capacity(institution, group.appointment_date); slot.revision += 1
+    enqueue_available(institution, group.appointment_date, slot)
+    db.session.commit(); return {"item": _group_payload(group)}, 200
+
+
+@booking_v7_bp.get("/waitlist-subscriptions")
+@roles_required(ROLE_USER)
+def waitlists():
+    rows = WaitlistSubscription.query.filter_by(subscriber_user_id=g.current_user.id).order_by(
+        WaitlistSubscription.created_at.desc()).all()
+    return {"items": [_waitlist_payload(row) for row in rows]}, 200
+
+
+@booking_v7_bp.post("/waitlist-subscriptions")
+@roles_required(ROLE_USER)
+def create_waitlist():
+    payload = request.get_json(silent=True) or {}
+    day, error = _parse_day(payload.get("appointment_date"))
+    if error: return error
+    try: institution_id, package_id = int(payload.get("institution_id")), int(payload.get("package_id"))
+    except (TypeError, ValueError): return {"message": "institution_id and package_id must be integers"}, 400
+    institution = Institution.query.filter_by(id=institution_id, is_active=True).first()
+    if not institution: return {"message": "institution not found"}, 404
+    package, version, result = _package(institution.id, package_id)
+    if package is None: return result
+    participants, error = _participants(g.current_user, payload.get("participant_user_ids"))
+    if error: return error
+    if not g.current_user.email:
+        return {"message": "订阅空位提醒前，请先绑定通知邮箱"}, 400
+    _lock_capacity(institution, day)
+    remaining = _remaining(institution, day)
+    if remaining is None or remaining >= len(participants):
+        db.session.rollback()
+        return {"message": "当前名额充足，请直接提交正式预约", "code": "BOOK_NOW"}, 409
+    existing = WaitlistSubscription.query.filter_by(subscriber_user_id=g.current_user.id,
+        institution_id=institution.id, package_id=package.id, appointment_date=day,
+        party_size=len(participants), status="active").first()
+    if existing: db.session.rollback(); return {"message": "equivalent active subscription already exists"}, 409
+    sub = WaitlistSubscription(subscriber_user_id=g.current_user.id, institution_id=institution.id,
+        package_id=package.id, package_version_id=version.id, appointment_date=day,
+        party_size=len(participants), notification_email=g.current_user.email)
+    db.session.add(sub); db.session.flush()
+    for user, authorized_at in participants:
+        db.session.add(WaitlistSubscriptionParticipant(subscription_id=sub.id, subject_user_id=user.id,
+            name_snapshot=user.real_name or user.username, health_id_snapshot=user.health_id,
+            booking_authorized_at=authorized_at))
+    db.session.commit()
+    return {"item": _waitlist_payload(sub)}, 201
+
+
+@booking_v7_bp.delete("/waitlist-subscriptions/<int:subscription_id>")
+@roles_required(ROLE_USER)
+def cancel_waitlist(subscription_id):
+    row = WaitlistSubscription.query.filter_by(id=subscription_id, subscriber_user_id=g.current_user.id).first()
+    if not row: return {"message": "waitlist subscription not found"}, 404
+    if row.status != "active": return {"message": "waitlist subscription is not active"}, 409
+    row.status = "cancelled"; row.closed_at = datetime.now(timezone.utc); db.session.commit()
+    return {"item": _waitlist_payload(row)}, 200

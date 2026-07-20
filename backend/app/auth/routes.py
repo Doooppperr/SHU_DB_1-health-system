@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from app.auth import auth_bp
 from app.extensions import db
 from app.models import InstitutionInvite, User
+from app.services.contact import is_valid_email, normalize_email
 
 
 CAPTCHA_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
@@ -148,14 +149,16 @@ def register():
     payload = request.get_json(silent=True) or {}
     username = (payload.get("username") or "").strip()
     password = payload.get("password") or ""
-    email = (payload.get("email") or "").strip() or None
+    email = normalize_email(payload.get("email"))
     phone = (payload.get("phone") or "").strip() or None
     invite_code = (payload.get("invite_code") or "").strip()
     captcha_id = (payload.get("captcha_id") or "").strip()
     captcha_answer = (payload.get("captcha_answer") or "").strip()
 
-    if not username or not password or not captcha_id or not captcha_answer:
-        return {"message": "username, password and captcha are required"}, 400
+    if not username or not password or not email or not captcha_id or not captcha_answer:
+        return {"message": "用户名、邮箱、密码和图片验证码均为必填项"}, 400
+    if not is_valid_email(email):
+        return {"message": "请输入有效的邮箱地址"}, 400
 
     if len(password) < 6:
         return {"message": "password must be at least 6 characters"}, 400
@@ -165,9 +168,6 @@ def register():
 
     if User.query.filter_by(username=username).first():
         return {"message": "username already exists"}, 409
-
-    if email and User.query.filter_by(email=email).first():
-        return {"message": "email already exists"}, 409
 
     invite = None
     expected_invite_hash = None
@@ -216,7 +216,7 @@ def register():
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
-        return {"message": "registration conflict, please retry"}, 409
+        return {"message": "注册信息冲突，请检查后重试"}, 409
 
     return _build_auth_payload(user, "register success"), 201
 

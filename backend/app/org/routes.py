@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
+from pathlib import Path
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 from flask import current_app, g, request
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
 from app.models import (
-    Appointment, IndicatorDict, Institution, InstitutionReport, Package,
-    PackageChangeRequest, ReportIndicator,
+    Appointment, AppointmentEvent, HealthDomain, IndicatorDict, Institution,
+    InstitutionReport, Package, PackageChangeRequest, ReportAsset,
+    ReportIndicator, ReportTextResult, WaitlistSubscription,
 )
 from app.org import org_bp
 from app.services import get_ocr_provider, get_storage_backend
@@ -25,9 +29,14 @@ from app.services.permissions import ROLE_INSTITUTION_ADMIN, roles_required
 from app.services.package_reviews import create_change_request
 from app.services.record_files import delete_report_urls
 from app.services.reports import find_subject_user, submit_report
+from app.services.domain_rules import (
+    DomainAdmissionError, admit_indicator, report_allowed_domain_ids,
+    validate_report_domains,
+)
 
 
 UPLOAD_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
+BUSINESS_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def managed_institution():
@@ -87,12 +96,14 @@ def create_report_from_payload(payload, *, temporary_file_url=None, diagnostics=
         subject_health_id=appointment.user_health_id_snapshot,
         exam_date=appointment.appointment_date,
         package_id=appointment.package_id,
+        package_version_id=appointment.package_version_id,
         matched_user_id=appointment.user_id,
         status="draft",
         temporary_file_url=temporary_file_url,
         ocr_diagnostics=diagnostics,
     )
     db.session.add(report)
+    db.session.flush()
     return report, None
 
 
@@ -107,7 +118,50 @@ def dashboard():
         status: Appointment.query.filter_by(institution_id=institution.id, status=status).count()
         for status in ("unfulfilled", "awaiting_report", "fulfilled", "invalidated", "cancelled")
     }
-    return {"summary": {"institution": institution_payload(institution), "report_status_counts": counts, "appointment_status_counts": appointment_counts, "pending_package_review_count": PackageChangeRequest.query.filter_by(institution_id=institution.id, status="pending").count(), "active_package_count": Package.query.filter_by(institution_id=institution.id, is_active=True).count()}}, 200
+    today = datetime.now(BUSINESS_TZ).date()
+    today_query = Appointment.query.filter_by(institution_id=institution.id, appointment_date=today)
+    today_counts = {
+        status: today_query.filter_by(status=status).count()
+        for status in ("unfulfilled", "awaiting_report", "fulfilled", "invalidated", "cancelled")
+    }
+    booked = sum(today_counts[status] for status in ("unfulfilled", "awaiting_report", "fulfilled"))
+    capacity = institution.daily_appointment_limit
+    task_rows = Appointment.query.filter(
+        Appointment.institution_id == institution.id,
+        Appointment.status.in_(("unfulfilled", "awaiting_report")),
+    ).order_by(Appointment.appointment_date, Appointment.id).limit(8).all()
+    tasks = [{
+        "id": row.id,
+        "appointment_date": row.appointment_date.isoformat(),
+        "subject_name": row.user_name_snapshot,
+        "package_name": row.package_name_snapshot,
+        "status": row.status,
+        "status_label": "待确认到检" if row.status == "unfulfilled" else "待归档健康数据",
+        "next_action": "确认到检" if row.status == "unfulfilled" else "完善健康数据",
+        "booking_group_id": row.booking_group_id,
+    } for row in task_rows]
+    review_rows = PackageChangeRequest.query.filter_by(institution_id=institution.id).order_by(
+        PackageChangeRequest.requested_at.desc(), PackageChangeRequest.id.desc()
+    ).limit(3).all()
+    return {"summary": {
+        "institution": institution_payload(institution),
+        "report_status_counts": counts,
+        "appointment_status_counts": appointment_counts,
+        "pending_package_review_count": PackageChangeRequest.query.filter_by(institution_id=institution.id, status="pending").count(),
+        "active_package_count": Package.query.filter_by(institution_id=institution.id, is_active=True).count(),
+        "today": {
+            "date": today.isoformat(), "capacity": capacity, "booked": booked,
+            "remaining": None if capacity is None else max(capacity - booked, 0),
+            "awaiting_arrival": today_counts["unfulfilled"],
+            "awaiting_archive": today_counts["awaiting_report"],
+            "completed": today_counts["fulfilled"],
+            "waitlist_subscriptions": WaitlistSubscription.query.filter_by(
+                institution_id=institution.id, appointment_date=today, status="active"
+            ).count(),
+        },
+        "tasks": tasks,
+        "recent_package_reviews": [row.to_dict() for row in review_rows],
+    }}, 200
 
 
 @org_bp.get("/institution")
@@ -264,8 +318,20 @@ def list_appointments():
     query = Appointment.query.filter_by(institution_id=institution.id)
     status = (request.args.get("status") or "").strip()
     if status: query = query.filter_by(status=status)
-    rows = query.order_by(Appointment.appointment_date.desc(), Appointment.id.desc()).all()
-    return {"items": [item.to_dict(include_user=True) for item in rows]}, 200
+    day = parse_date(request.args.get("appointment_date")) if request.args.get("appointment_date") else None
+    if day: query = query.filter_by(appointment_date=day)
+    page = max(request.args.get("page", 1, type=int) or 1, 1); size = min(max(request.args.get("page_size", 30, type=int) or 30, 1), 100)
+    total = query.count(); rows = query.order_by(Appointment.appointment_date.desc(), Appointment.booking_group_id, Appointment.id).offset((page - 1) * size).limit(size).all()
+    summary = None
+    if day:
+        all_day = Appointment.query.filter_by(institution_id=institution.id, appointment_date=day)
+        active = all_day.filter(Appointment.status.in_(("unfulfilled", "awaiting_report", "fulfilled"))).count()
+        summary = {"appointment_date": day.isoformat(), "capacity": institution.daily_appointment_limit,
+                   "booked": active, "remaining": None if institution.daily_appointment_limit is None else max(institution.daily_appointment_limit - active, 0),
+                   "attended": all_day.filter(Appointment.status.in_(("awaiting_report", "fulfilled"))).count(),
+                   "waitlist_subscriptions": WaitlistSubscription.query.filter_by(institution_id=institution.id, appointment_date=day, status="active").count()}
+    return {"items": [item.to_dict(include_user=True) for item in rows], "summary": summary,
+            "pagination": {"page": page, "page_size": size, "total": total, "pages": (total + size - 1) // size}}, 200
 
 
 @org_bp.post("/appointments/<int:appointment_id>/attend")
@@ -277,6 +343,8 @@ def attend_appointment(appointment_id):
     if item is None: return {"message": "appointment not found"}, 404
     if item.status != "unfulfilled": return {"message": "only unfulfilled appointments can be confirmed"}, 409
     item.status = "awaiting_report"; item.attended_at = datetime.now(timezone.utc)
+    db.session.add(AppointmentEvent(appointment_id=item.id, event_type="attended", status_snapshot="awaiting_report",
+                                    message="机构确认到检", actor_user_id=g.current_user.id, occurred_at=item.attended_at))
     db.session.commit()
     return {"item": item.to_dict(include_user=True)}, 200
 
@@ -290,6 +358,10 @@ def invalidate_appointment(appointment_id):
     if item is None: return {"message": "appointment not found"}, 404
     if item.status != "unfulfilled": return {"message": "only unfulfilled appointments can be invalidated"}, 409
     item.status = "invalidated"; item.active_date_key = None; item.invalidated_at = datetime.now(timezone.utc)
+    db.session.add(AppointmentEvent(appointment_id=item.id, event_type="invalidated", status_snapshot="invalidated",
+                                    message="预约已失效", actor_user_id=g.current_user.id, occurred_at=item.invalidated_at))
+    from app.booking_v7.routes import _lock_capacity, enqueue_available
+    slot = _lock_capacity(institution, item.appointment_date); slot.revision += 1; enqueue_available(institution, item.appointment_date, slot)
     db.session.commit()
     return {"item": item.to_dict(include_user=True)}, 200
 
@@ -391,9 +463,20 @@ def add_indicator(report_id):
     payload = request.get_json(silent=True) or {}
     definition = db.session.get(IndicatorDict, payload.get("indicator_dict_id"))
     if not definition: return {"message": "indicator not found"}, 404
+    try: display_domain_id = admit_indicator(report, definition.id)
+    except DomainAdmissionError as exc: return {"message": str(exc), "code": "DOMAIN_NOT_ALLOWED"}, 400
     try: value = normalize_indicator_value(definition, payload.get("value"))
     except IndicatorValueError as exc: return {"message": str(exc)}, 400
-    row = ReportIndicator(report_id=report.id, indicator_dict_id=definition.id, value=value, is_abnormal=evaluate_is_abnormal(definition, value), input_source=payload.get("input_source") if payload.get("input_source") in {"manual", "ocr"} else "manual")
+    row = ReportIndicator(report_id=report.id, indicator_dict_id=definition.id, value=value,
+        is_abnormal=evaluate_is_abnormal(definition, value),
+        input_source=payload.get("input_source") if payload.get("input_source") in {"manual", "ocr"} else "manual",
+        display_domain_id=display_domain_id, original_name=(payload.get("original_name") or definition.name).strip(),
+        original_value=str(payload.get("original_value", payload.get("value"))),
+        original_unit=(payload.get("original_unit") or definition.unit), normalized_unit=definition.unit,
+        reference_text=(payload.get("reference_text") or "").strip() or None,
+        method_snapshot=(payload.get("method") or "").strip() or None,
+        abnormal_flag=(payload.get("abnormal_flag") or "").strip() or None,
+        mapping_confidence=payload.get("mapping_confidence"), mapping_status="confirmed")
     db.session.add(row)
     try: db.session.commit()
     except IntegrityError: db.session.rollback(); return {"message": "indicator already exists in report"}, 409
@@ -411,9 +494,15 @@ def update_indicator(report_id, indicator_id):
     payload = request.get_json(silent=True) or {}
     definition = db.session.get(IndicatorDict, payload.get("indicator_dict_id", row.indicator_dict_id))
     if not definition: return {"message": "indicator not found"}, 404
+    try: display_domain_id = admit_indicator(report, definition.id)
+    except DomainAdmissionError as exc: return {"message": str(exc), "code": "DOMAIN_NOT_ALLOWED"}, 400
     try: value = normalize_indicator_value(definition, payload.get("value", row.value))
     except IndicatorValueError as exc: return {"message": str(exc)}, 400
-    row.indicator_dict_id = definition.id; row.value = value; row.is_abnormal = evaluate_is_abnormal(definition, value)
+    row.indicator_dict_id = definition.id; row.value = value; row.is_abnormal = evaluate_is_abnormal(definition, value); row.display_domain_id = display_domain_id
+    row.original_name = (payload.get("original_name") or row.original_name or definition.name).strip()
+    row.original_value = str(payload.get("original_value", payload.get("value", row.original_value or value)))
+    row.original_unit = payload.get("original_unit", row.original_unit or definition.unit); row.normalized_unit = definition.unit
+    row.reference_text = payload.get("reference_text", row.reference_text); row.method_snapshot = payload.get("method", row.method_snapshot)
     try: db.session.commit()
     except IntegrityError: db.session.rollback(); return {"message": "indicator already exists in report"}, 409
     return {"item": row.to_dict()}, 200
@@ -430,6 +519,156 @@ def delete_indicator(report_id, indicator_id):
     db.session.delete(row); db.session.commit(); return {"message": "indicator deleted"}, 200
 
 
+def _allowed_report_domain(report, raw_domain_id):
+    try: domain_id = int(raw_domain_id)
+    except (TypeError, ValueError): return None, ({"message": "health_domain_id must be an integer"}, 400)
+    domain = db.session.get(HealthDomain, domain_id)
+    if not domain or domain_id not in report_allowed_domain_ids(report):
+        return None, ({"message": "health domain is outside the appointment package snapshot", "code": "DOMAIN_NOT_ALLOWED"}, 400)
+    return domain, None
+
+
+@org_bp.post("/health-data/<int:report_id>/text-results")
+@roles_required(ROLE_INSTITUTION_ADMIN)
+def add_text_result(report_id):
+    report, error = scoped_report(report_id)
+    if error: return error
+    if report.status != "draft": return {"message": "locked health data is immutable"}, 409
+    payload = request.get_json(silent=True) or {}
+    domain, error = _allowed_report_domain(report, payload.get("health_domain_id"))
+    if error: return error
+    title, body = str(payload.get("title") or "").strip(), str(payload.get("body") or "").strip()
+    if not title or not body: return {"message": "title and body are required"}, 400
+    row = ReportTextResult(report_id=report.id, health_domain_id=domain.id, title=title, body=body,
+        source_snapshot=(payload.get("source") or "机构结论").strip(), sort_order=int(payload.get("sort_order") or 0),
+        created_by_user_id=g.current_user.id)
+    db.session.add(row); db.session.commit(); return {"item": row.to_dict()}, 201
+
+
+@org_bp.patch("/health-data/<int:report_id>/text-results/<int:result_id>")
+@roles_required(ROLE_INSTITUTION_ADMIN)
+def update_text_result(report_id, result_id):
+    report, error = scoped_report(report_id)
+    if error: return error
+    if report.status != "draft": return {"message": "locked health data is immutable"}, 409
+    row = ReportTextResult.query.filter_by(id=result_id, report_id=report.id).first()
+    if not row: return {"message": "text result not found"}, 404
+    payload = request.get_json(silent=True) or {}
+    if "health_domain_id" in payload:
+        domain, error = _allowed_report_domain(report, payload.get("health_domain_id"))
+        if error: return error
+        row.health_domain_id = domain.id
+    for field in ("title", "body", "source"):
+        if field in payload:
+            value = str(payload.get(field) or "").strip()
+            if field in {"title", "body"} and not value: return {"message": f"{field} cannot be blank"}, 400
+            setattr(row, "source_snapshot" if field == "source" else field, value or None)
+    if "sort_order" in payload: row.sort_order = int(payload.get("sort_order") or 0)
+    db.session.commit(); return {"item": row.to_dict()}, 200
+
+
+@org_bp.delete("/health-data/<int:report_id>/text-results/<int:result_id>")
+@roles_required(ROLE_INSTITUTION_ADMIN)
+def delete_text_result(report_id, result_id):
+    report, error = scoped_report(report_id)
+    if error: return error
+    if report.status != "draft": return {"message": "locked health data is immutable"}, 409
+    row = ReportTextResult.query.filter_by(id=result_id, report_id=report.id).first()
+    if not row: return {"message": "text result not found"}, 404
+    db.session.delete(row); db.session.commit(); return {"message": "text result deleted"}, 200
+
+
+def _asset_metadata(path, extension):
+    size = os.path.getsize(path)
+    if size <= 0 or size > current_app.config.get("HEALTH_ASSET_MAX_BYTES", 20 * 1024 * 1024):
+        raise ValueError("asset size is outside the allowed range")
+    if extension == ".pdf":
+        import fitz
+        with fitz.open(path) as document:
+            pages = document.page_count
+        if pages < 1 or pages > current_app.config.get("HEALTH_ASSET_MAX_PAGES", 50):
+            raise ValueError("PDF page count is outside the allowed range")
+        mime, width, height = "application/pdf", None, None
+        return mime, width, height, pages, size
+    from PIL import Image
+    with Image.open(path) as image:
+        image.verify()
+    with Image.open(path) as image:
+        format_name = image.format; width, height = image.size
+    expected = {"JPEG": ("image/jpeg", {".jpg", ".jpeg"}), "PNG": ("image/png", {".png"}), "WEBP": ("image/webp", {".webp"})}
+    if format_name not in expected or extension not in expected[format_name][1]:
+        raise ValueError("file extension does not match its actual image type")
+    if width * height > current_app.config.get("HEALTH_ASSET_MAX_PIXELS", 40_000_000):
+        raise ValueError("image pixel count exceeds the limit")
+    return expected[format_name][0], width, height, None, size
+
+
+@org_bp.post("/health-data/<int:report_id>/assets")
+@roles_required(ROLE_INSTITUTION_ADMIN)
+def add_asset(report_id):
+    report, error = scoped_report(report_id)
+    if error: return error
+    if report.status != "draft": return {"message": "locked health data is immutable"}, 409
+    upload = request.files.get("file")
+    if not upload or not upload.filename: return {"message": "file is required"}, 400
+    extension = Path(upload.filename).suffix.lower()
+    if extension not in {".pdf", ".png", ".jpg", ".jpeg", ".webp"}: return {"message": "unsupported file type"}, 400
+    domain, error = _allowed_report_domain(report, request.form.get("health_domain_id"))
+    if error: return error
+    title = str(request.form.get("title") or Path(upload.filename).stem).strip()
+    modality = str(request.form.get("modality") or ("pdf" if extension == ".pdf" else "image")).strip()
+    storage = get_storage_backend(current_app.config); saved = storage.save(upload, subdir="health-assets")
+    try:
+        mime, width, height, pages, size = _asset_metadata(saved["abs_path"], extension)
+        digest = hashlib.sha256(Path(saved["abs_path"]).read_bytes()).hexdigest()
+        row = ReportAsset(report_id=report.id, health_domain_id=domain.id, modality=modality,
+            title=title, storage_key=saved["key"], mime_type=mime, byte_size=size,
+            width=width, height=height, page_count=pages, sha256=digest,
+            annotation_text=str(request.form.get("annotation") or "").strip() or None,
+            sort_order=int(request.form.get("sort_order") or 0), uploaded_by_user_id=g.current_user.id)
+        db.session.add(row); db.session.commit()
+    except Exception as exc:
+        db.session.rollback(); storage.delete(saved["key"])
+        if isinstance(exc, ValueError): return {"message": str(exc)}, 400
+        raise
+    return {"item": row.to_dict(f"hd-i-{report.id:x}")}, 201
+
+
+@org_bp.patch("/health-data/<int:report_id>/assets/<int:asset_id>")
+@roles_required(ROLE_INSTITUTION_ADMIN)
+def update_asset(report_id, asset_id):
+    report, error = scoped_report(report_id)
+    if error: return error
+    if report.status != "draft": return {"message": "locked health data is immutable"}, 409
+    row = ReportAsset.query.filter_by(id=asset_id, report_id=report.id).first()
+    if not row: return {"message": "asset not found"}, 404
+    payload = request.get_json(silent=True) or {}
+    if "health_domain_id" in payload:
+        domain, error = _allowed_report_domain(report, payload.get("health_domain_id"))
+        if error: return error
+        row.health_domain_id = domain.id
+    for field, attr in (("title", "title"), ("modality", "modality"), ("annotation", "annotation_text")):
+        if field in payload:
+            value = str(payload.get(field) or "").strip()
+            if field in {"title", "modality"} and not value: return {"message": f"{field} cannot be blank"}, 400
+            setattr(row, attr, value or None)
+    if "sort_order" in payload: row.sort_order = int(payload.get("sort_order") or 0)
+    db.session.commit(); return {"item": row.to_dict(f"hd-i-{report.id:x}")}, 200
+
+
+@org_bp.delete("/health-data/<int:report_id>/assets/<int:asset_id>")
+@roles_required(ROLE_INSTITUTION_ADMIN)
+def delete_asset(report_id, asset_id):
+    report, error = scoped_report(report_id)
+    if error: return error
+    if report.status != "draft": return {"message": "locked health data is immutable"}, 409
+    row = ReportAsset.query.filter_by(id=asset_id, report_id=report.id).first()
+    if not row: return {"message": "asset not found"}, 404
+    key = row.storage_key; db.session.delete(row); db.session.commit()
+    get_storage_backend(current_app.config).delete(key)
+    return {"message": "asset deleted"}, 200
+
+
 @org_bp.post("/reports/ocr")
 @roles_required(ROLE_INSTITUTION_ADMIN)
 def ocr_report():
@@ -444,16 +683,26 @@ def ocr_report():
         diagnostics = {"engine": result.get("engine"), "parser_version": result.get("parser_version"), **mapping.get("diagnostics", {}), "unmatched": mapping.get("unmatched", [])[:30]}
         report, error = create_report_from_payload(request.form, temporary_file_url=saved["url"], diagnostics=diagnostics)
         if error: storage.delete(saved["key"]); return error
+        admitted_candidates, excluded = [], []
         for candidate in mapping.get("candidate_mappings", []):
             if candidate.get("requires_review"): continue
             definition = db.session.get(IndicatorDict, candidate["indicator_dict_id"])
+            try: display_domain_id = admit_indicator(report, definition.id)
+            except DomainAdmissionError:
+                excluded.append({"field": candidate.get("raw_name") or definition.name, "reason": "outside_package_domain"}); continue
             try: value = normalize_ocr_indicator_value(definition, candidate["value"])
             except IndicatorValueError: continue
-            report.indicators.append(ReportIndicator(indicator_dict_id=definition.id, value=value, is_abnormal=evaluate_is_abnormal(definition, value), input_source="ocr"))
+            report.indicators.append(ReportIndicator(indicator_dict_id=definition.id, value=value,
+                is_abnormal=evaluate_is_abnormal(definition, value), input_source="ocr",
+                display_domain_id=display_domain_id, original_name=candidate.get("raw_name") or definition.name,
+                original_value=str(candidate.get("value")), original_unit=candidate.get("unit") or definition.unit,
+                normalized_unit=definition.unit, mapping_confidence=candidate.get("score"), mapping_status="confirmed"))
+            admitted_candidates.append(candidate)
+        report.ocr_diagnostics = {**(report.ocr_diagnostics or {}), "excluded": excluded, "excluded_count": len(excluded)}
         db.session.commit()
     except Exception:
         db.session.rollback(); storage.delete(saved["key"]); raise
-    return {"item": report.to_dict(include_indicators=True), "ocr": {"candidate_mappings": mapping.get("candidate_mappings", []), "diagnostics": diagnostics}}, 201
+    return {"item": report.to_dict(include_indicators=True), "ocr": {"candidate_mappings": admitted_candidates, "excluded": excluded, "diagnostics": report.ocr_diagnostics}}, 201
 
 
 @org_bp.post("/reports/<int:report_id>/lock")
@@ -462,7 +711,9 @@ def lock_report(report_id):
     report, error = scoped_report(report_id)
     if error: return error
     if report.status != "draft": return {"message": "only draft reports can be locked"}, 409
-    if not report.indicators: return {"message": "at least one indicator is required"}, 400
+    if not report.indicators and not report.text_results and not report.assets: return {"message": "at least one indicator, text result or asset is required"}, 400
+    try: validate_report_domains(report)
+    except DomainAdmissionError as exc: return {"message": str(exc), "code": "DOMAIN_NOT_ALLOWED"}, 400
     if find_subject_user(report) is None:
         return {"message": "registered user not found or identity does not match"}, 409
     temp_url = report.temporary_file_url
@@ -484,6 +735,9 @@ def submit(report_id):
                 raise ValueError("appointment is not awaiting a report")
             report.appointment.status = "fulfilled"
             report.appointment.fulfilled_at = datetime.now(timezone.utc)
+            db.session.add(AppointmentEvent(appointment_id=report.appointment.id, event_type="archived",
+                status_snapshot="fulfilled", message="健康数据已归档", actor_user_id=g.current_user.id,
+                occurred_at=report.appointment.fulfilled_at))
         db.session.commit()
     except ValueError as exc: db.session.rollback(); return {"message": str(exc)}, 409
     except IntegrityError: db.session.rollback(); return {"message": "report publishing conflict; reload and retry"}, 409

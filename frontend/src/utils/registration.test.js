@@ -28,13 +28,13 @@ describe("registration payload", () => {
     });
   });
 
-  it("omits blank optional contact fields", () => {
+  it("always includes the normalized mandatory email while omitting a blank optional phone", () => {
     const payload = buildRegistrationPayload("user", {
       ...form,
       email: " ",
       phone: "",
     });
-    expect(payload).not.toHaveProperty("email");
+    expect(payload.email).toBe("");
     expect(payload).not.toHaveProperty("phone");
   });
 });

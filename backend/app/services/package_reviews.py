@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from app.extensions import db
-from app.models import Package, PackageChangeRequest
+from app.models import (
+    HealthDomain, Package, PackageChangeRequest, PackageVersion, PackageVersionDomain,
+)
 from app.services.institution_management import ManagementValidationError, apply_package_payload
 
 
@@ -12,6 +14,10 @@ def _package_data(package):
         "gender_scope": package.gender_scope,
         "price": float(package.price),
         "description": package.description,
+        "package_type": package.package_type,
+        "audience": package.audience,
+        "booking_notice": package.booking_notice,
+        "domain_ids": [row.health_domain_id for row in package.versions[-1].domains] if package.versions else [],
         "is_active": package.is_active,
     }
 
@@ -21,9 +27,27 @@ def _normalized_package_data(institution_id, payload, *, base=None):
     source.update(payload or {})
     candidate = Package(institution_id=institution_id)
     apply_package_payload(candidate, source, creating=base is None)
+    if not candidate.package_type:
+        candidate.package_type = "special"
     if base is None and candidate.is_active is None:
         candidate.is_active = True
-    return _package_data(candidate)
+    result = _package_data(candidate)
+    raw_domain_ids = source.get("domain_ids")
+    if raw_domain_ids is None:
+        fallback = HealthDomain.query.filter_by(code="other", is_active=True).first()
+        raw_domain_ids = [fallback.id] if fallback else []
+    if not isinstance(raw_domain_ids, list):
+        raise ManagementValidationError("domain_ids must be an array")
+    try: domain_ids = list(dict.fromkeys(int(value) for value in raw_domain_ids))
+    except (TypeError, ValueError): raise ManagementValidationError("domain_ids must contain integers") from None
+    if candidate.package_type == "special" and len(domain_ids) != 1:
+        raise ManagementValidationError("专项套餐必须恰好选择一个健康领域")
+    if candidate.package_type == "combined" and len(domain_ids) < 2:
+        raise ManagementValidationError("组合套餐必须至少选择两个健康领域")
+    if len(domain_ids) > 8 or HealthDomain.query.filter(HealthDomain.id.in_(domain_ids), HealthDomain.is_active.is_(True)).count() != len(domain_ids):
+        raise ManagementValidationError("domain_ids contains an invalid health domain")
+    result["domain_ids"] = domain_ids
+    return result
 
 
 def create_change_request(institution, requester, action, *, package=None, payload=None):
@@ -93,6 +117,21 @@ def approve_change_request(item, reviewer, note=None):
             package.is_active = False
         elif item.action == "reactivate":
             package.is_active = True
+    if item.action in {"create", "update", "reactivate"}:
+        proposed = item.proposed_data or {}
+        latest = PackageVersion.query.filter_by(package_id=package.id).order_by(PackageVersion.version_number.desc()).first()
+        version = PackageVersion(
+            package_id=package.id, version_number=(latest.version_number + 1) if latest else 1,
+            package_type=package.package_type, name_snapshot=package.name,
+            price_snapshot=package.price, audience_snapshot=package.audience or package.gender_scope,
+            description_snapshot=package.description, booking_notice_snapshot=package.booking_notice,
+            approved_by_user_id=reviewer.id,
+        )
+        db.session.add(version); db.session.flush()
+        for order, domain_id in enumerate(proposed.get("domain_ids") or []):
+            db.session.add(PackageVersionDomain(package_version_id=version.id,
+                                                health_domain_id=domain_id, sort_order=order))
+        package.current_version_id = version.id
     item.status = "approved"
     item.reviewed_by_user_id = reviewer.id
     item.review_note = str(note or "").strip() or None

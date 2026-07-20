@@ -38,7 +38,7 @@ from app.ai.rag import (
     get_knowledge_retriever,
 )
 from app.extensions import db
-from app.models import FriendRelation, HealthIndicator, HealthRecord, IndicatorDict, User
+from app.models import FriendRelation, HealthDomain, HealthIndicator, HealthRecord, IndicatorDict, ReportAsset, User
 
 
 _rate_buckets = defaultdict(deque)
@@ -1085,6 +1085,20 @@ def analyze_stream():
             "record_consent_required",
             400,
         )
+    domain_id = payload.get("domain_id")
+    if domain_id is not None:
+        try: domain_id = int(domain_id)
+        except (TypeError, ValueError): return _json_error("domain_id must be an integer", "invalid_domain_id", 400)
+        if not db.session.get(HealthDomain, domain_id): return _json_error("health domain not found", "domain_not_found", 404)
+    selected_asset_ids = payload.get("selected_asset_ids") or []
+    if not isinstance(selected_asset_ids, list) or any(isinstance(value, bool) for value in selected_asset_ids):
+        return _json_error("selected_asset_ids must be a list of integers", "invalid_asset_ids", 400)
+    try: selected_asset_ids = list(dict.fromkeys(int(value) for value in selected_asset_ids))
+    except (TypeError, ValueError): return _json_error("selected_asset_ids must be a list of integers", "invalid_asset_ids", 400)
+    if selected_asset_ids and payload.get("image_consent") is not True:
+        return _json_error("explicit image consent is required for every request", "image_consent_required", 400)
+    if selected_asset_ids and not current_app.config.get("AI_SUPPORTS_IMAGES", False):
+        return _json_error("the configured AI model does not support image analysis", "image_analysis_unavailable", 409)
     if record_scope:
         records, load_error = _load_record_scope(user, record_scope)
     else:
@@ -1092,7 +1106,16 @@ def analyze_stream():
     if load_error:
         return load_error
 
-    facts = build_analysis_facts(user, records)
+    facts = build_analysis_facts(user, records, domain_id=domain_id)
+    if domain_id is not None and not facts.get("trends") and not any(item.get("indicators") for item in facts.get("records", [])) and not facts.get("institution_text_results"):
+        return _json_error("selected records contain no data in this health domain", "domain_data_unavailable", 400)
+    if selected_asset_ids:
+        record_ids_set = {record.id for record in records}
+        assets = ReportAsset.query.filter(ReportAsset.id.in_(selected_asset_ids), ReportAsset.report_id.in_(record_ids_set)).all()
+        if len(assets) != len(selected_asset_ids) or any(domain_id is not None and item.health_domain_id != domain_id for item in assets):
+            return _json_error("asset is unavailable", "asset_unavailable", 404)
+        facts["selected_assets"] = [{"id": item.id, "title": item.title, "modality": item.modality,
+                                     "mime_type": item.mime_type, "annotation": item.annotation_text} for item in assets]
     from app.health.routes import effective_points
     owner_id = records[0].owner_id
     facts["daily_effective_indicators"] = [
@@ -1104,6 +1127,7 @@ def analyze_stream():
         }
         for definition in IndicatorDict.query.filter_by(allow_self_measurement=True).all()
         if effective_points(owner_id, definition.id)
+        and (domain_id is None or any(link.health_domain_id == domain_id for link in definition.domain_links))
     ]
     request_id = uuid.uuid4().hex
     configured_model = current_app.config.get("DEEPSEEK_MODEL")
@@ -1208,3 +1232,10 @@ def analyze_stream():
             )
 
     return _sse_response(generate())
+
+
+@ai_bp.get("/capabilities")
+def capabilities():
+    return {"image_analysis": bool(current_app.config.get("AI_SUPPORTS_IMAGES", False)),
+            "domain_analysis": True, "analysis_persisted": False,
+            "medical_diagnosis": False}, 200

@@ -64,6 +64,7 @@
           <h1>{{ pageTitle }}</h1>
         </div>
         <div class="workspace-top-actions">
+          <AiAssistantLauncher />
           <AppearanceQuickControls />
           <router-link class="workspace-portal-link" to="/">返回门户</router-link>
           <span class="workspace-role-badge">{{ roleName }}</span>
@@ -84,6 +85,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import { useAppearanceStore } from "../stores/appearance";
 import { dashboardRouteForRole, roleLabel } from "../utils/roles";
+import AiAssistantLauncher from "../components/AiAssistantLauncher.vue";
 import AppearanceQuickControls from "../components/AppearanceQuickControls.vue";
 
 const route = useRoute();
@@ -101,8 +103,8 @@ const menus = {
   user: [
     { name: "dashboard", label: "健康总览", icon: "总" },
     { name: "timeline", label: "健康时间线", icon: "线" },
-    { name: "measurements", label: "日常测量", icon: "测" },
-    { name: "trends", label: "指标趋势", icon: "趋" },
+    { name: "health-data", label: "健康数据", icon: "数" },
+    { name: "trends", label: "健康趋势", icon: "趋" },
     { name: "friends", label: "亲友授权", icon: "友" },
     { name: "institutions", label: "体检机构", icon: "院" },
     { name: "appointments", label: "体检预约", icon: "约" },

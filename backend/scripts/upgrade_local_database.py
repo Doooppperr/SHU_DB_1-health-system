@@ -1,7 +1,8 @@
-"""Upgrade the local SQLite database to HealthDoc schema v6.
+"""Upgrade the local SQLite database to HealthDoc schema v7.
 
-The v5-to-v6 path preserves all current business data while adding appointments
-and package change reviews. Older supported snapshots are copied by common
+The v6-to-v7 path preserves all current business data while adding health
+domains, package versions, booking groups, waitlists and private assets. Older
+supported snapshots are copied by common
 columns into the current schema; much older unsupported schemas
 retain only the current system administrator identity before rebuilding.
 """
@@ -24,7 +25,7 @@ from sqlalchemy import create_engine
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_DATABASE = BACKEND_DIR / "instance" / "health_system.db"
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 sys.path.insert(0, str(BACKEND_DIR))
 
 from app import models as _models  # noqa: E402,F401
@@ -44,7 +45,7 @@ class SchemaReport:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Upgrade the local SQLite database to schema v6.")
+    parser = argparse.ArgumentParser(description="Upgrade the local SQLite database to schema v7.")
     parser.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
     parser.add_argument("--check-only", action="store_true")
     return parser.parse_args()
@@ -63,10 +64,22 @@ def inspect_schema(connection):
         missing_columns.extend(f"{name}.{column.name}" for column in db.metadata.tables[name].columns if column.name not in actual)
     ddl = "\n".join((row[0] or "") for row in connection.execute("SELECT sql FROM sqlite_master WHERE type IN ('table','index') AND sql IS NOT NULL"))
     named = {constraint.name for table in db.metadata.tables.values() for constraint in table.constraints if constraint.name}
+    incompatible_constraints = []
+    if "users" in tables:
+        for index_row in connection.execute('PRAGMA index_list("users")'):
+            if not index_row[2]:
+                continue
+            columns = tuple(
+                row[2] for row in connection.execute(
+                    f'PRAGMA index_info("{index_row[1]}")'
+                )
+            )
+            if columns == ("email",):
+                incompatible_constraints.append("users.email_unique_must_be_removed")
     return SchemaReport(
         int(connection.execute("PRAGMA user_version").fetchone()[0]),
         tuple(sorted(expected - tables)), tuple(missing_columns),
-        tuple(sorted(name for name in named if name not in ddl)),
+        tuple(sorted([*(name for name in named if name not in ddl), *incompatible_constraints])),
     )
 
 
@@ -78,7 +91,7 @@ def validate(connection):
         raise RuntimeError(f"SQLite foreign_key_check found {len(violations)} violation(s)")
     report = inspect_schema(connection)
     if not report.is_current:
-        raise RuntimeError(f"schema v6 validation failed: {report}")
+        raise RuntimeError(f"schema v7 validation failed: {report}")
 
 
 def read_admin(connection):
@@ -97,7 +110,7 @@ def read_admin(connection):
 
 def backup_path(database):
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return database.with_name(f"{database.stem}.before-schema-v6-{stamp}-{uuid.uuid4().hex[:6]}.db")
+    return database.with_name(f"{database.stem}.before-schema-v7-{stamp}-{uuid.uuid4().hex[:6]}.db")
 
 
 def rebuild_database(database_path):
@@ -114,10 +127,10 @@ def rebuild_database(database_path):
         admin = read_admin(source)
         available_tables = table_names(source)
 
-    if report.version in {4, 5}:
+    if report.version in {4, 5, 6, 7}:
         from scripts.migrate_sqlite_to_gaussdb import migrate
 
-        temporary = database_path.with_name(f".{database_path.stem}.v6-{uuid.uuid4().hex}.db")
+        temporary = database_path.with_name(f".{database_path.stem}.v7-{uuid.uuid4().hex}.db")
         backup = backup_path(database_path)
         try:
             migrate(
@@ -138,7 +151,7 @@ def rebuild_database(database_path):
             raise
         return backup
 
-    temporary = database_path.with_name(f".{database_path.stem}.v6-{uuid.uuid4().hex}.db")
+    temporary = database_path.with_name(f".{database_path.stem}.v7-{uuid.uuid4().hex}.db")
     backup = backup_path(database_path)
     engine = create_engine(f"sqlite:///{temporary.as_posix()}")
     try:

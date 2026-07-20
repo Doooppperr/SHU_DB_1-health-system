@@ -26,6 +26,8 @@ class Institution(db.Model):
     description = db.Column(db.Text, nullable=True)
     logo_url = db.Column(db.String(255), nullable=True)
     daily_appointment_limit = db.Column(db.Integer, nullable=True)
+    notification_email = db.Column(db.String(120), nullable=True)
+    notification_enabled = db.Column(db.Boolean, nullable=False, default=True, server_default=db.true())
     is_active = db.Column(
         db.Boolean,
         nullable=False,
@@ -83,6 +85,7 @@ class Institution(db.Model):
             "images": image_items,
             "is_active": self.is_active,
             "daily_appointment_limit": self.daily_appointment_limit,
+            "notification_email": self.notification_email,
             "package_count": active_package_count,
             "total_package_count": len(self.packages),
         }
@@ -105,6 +108,10 @@ class Package(db.Model):
     gender_scope = db.Column(db.String(40), nullable=False, default="all")
     price = db.Column(db.Numeric(10, 2), nullable=False, default=Decimal("0.00"))
     description = db.Column(db.Text, nullable=True)
+    package_type = db.Column(db.String(20), nullable=False, default="special", server_default="special")
+    audience = db.Column(db.String(120), nullable=True)
+    booking_notice = db.Column(db.Text, nullable=True)
+    current_version_id = db.Column(db.Integer, nullable=True, index=True)
     is_active = db.Column(
         db.Boolean,
         nullable=False,
@@ -115,9 +122,10 @@ class Package(db.Model):
     institution = db.relationship("Institution", back_populates="packages")
     appointments = db.relationship("Appointment", back_populates="package")
     change_requests = db.relationship("PackageChangeRequest", back_populates="package")
+    versions = db.relationship("PackageVersion", back_populates="package", foreign_keys="PackageVersion.package_id", cascade="all, delete-orphan")
 
     def to_dict(self):
-        return {
+        payload = {
             "id": self.id,
             "institution_id": self.institution_id,
             "name": self.name,
@@ -125,8 +133,16 @@ class Package(db.Model):
             "gender_scope": self.gender_scope,
             "price": float(self.price),
             "description": self.description,
+            "package_type": self.package_type,
+            "audience": self.audience,
+            "booking_notice": self.booking_notice,
+            "current_version_id": self.current_version_id,
             "is_active": self.is_active,
         }
+        current = next((row for row in self.versions if row.id == self.current_version_id), None)
+        payload["version"] = current.to_dict() if current else None
+        payload["domains"] = payload["version"]["domains"] if current else []
+        return payload
 
 
 def utc_now():
@@ -147,11 +163,17 @@ class Appointment(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     institution_id = db.Column(db.Integer, db.ForeignKey("institutions.id"), nullable=False, index=True)
     package_id = db.Column(db.Integer, db.ForeignKey("packages.id", ondelete="SET NULL"), nullable=True, index=True)
+    package_version_id = db.Column(db.Integer, db.ForeignKey("package_versions.id", ondelete="SET NULL"), nullable=True, index=True)
+    booking_group_id = db.Column(db.Integer, db.ForeignKey("booking_groups.id", ondelete="SET NULL"), nullable=True, index=True)
+    booked_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     appointment_date = db.Column(db.Date, nullable=False, index=True)
     active_date_key = db.Column(db.Date, nullable=True)
     status = db.Column(db.String(24), nullable=False, default="unfulfilled", index=True)
     user_name_snapshot = db.Column(db.String(80), nullable=False)
     user_health_id_snapshot = db.Column(db.String(20), nullable=False)
+    user_birth_date_snapshot = db.Column(db.Date, nullable=True)
+    user_gender_snapshot = db.Column(db.String(20), nullable=True)
+    user_contact_snapshot = db.Column(db.String(120), nullable=True)
     package_name_snapshot = db.Column(db.String(120), nullable=False)
     package_price_snapshot = db.Column(db.Numeric(10, 2), nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
@@ -163,13 +185,19 @@ class Appointment(db.Model):
     user = db.relationship("User", foreign_keys=[user_id])
     institution = db.relationship("Institution", back_populates="appointments")
     package = db.relationship("Package", back_populates="appointments")
+    package_version = db.relationship("PackageVersion")
     report = db.relationship("InstitutionReport", back_populates="appointment", uselist=False)
+    booking_group = db.relationship("BookingGroup", back_populates="appointments")
+    events = db.relationship("AppointmentEvent", back_populates="appointment", cascade="all, delete-orphan", order_by="AppointmentEvent.occurred_at")
 
     def to_dict(self, *, include_user=False):
         payload = {
             "id": self.id,
             "institution_id": self.institution_id,
             "package_id": self.package_id,
+            "package_version_id": self.package_version_id,
+            "booking_group_id": self.booking_group_id,
+            "booked_by_user_id": self.booked_by_user_id,
             "appointment_date": self.appointment_date.isoformat(),
             "status": self.status,
             "package_name": self.package_name_snapshot,
@@ -192,6 +220,8 @@ class Appointment(db.Model):
                 "id": self.user_id,
                 "name": self.user_name_snapshot,
                 "health_id": self.user_health_id_snapshot,
+                "birth_date": self.user_birth_date_snapshot.isoformat() if self.user_birth_date_snapshot else None,
+                "gender": self.user_gender_snapshot,
             }
         return payload
 

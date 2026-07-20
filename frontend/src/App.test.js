@@ -2,116 +2,44 @@ import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("vue-router", () => ({
-  useRoute: () => ({ name: "public-home", fullPath: "/" }),
-}));
+vi.mock("vue-router", () => ({ useRoute: () => ({ name: "dashboard", fullPath: "/dashboard" }) }));
 
 import App from "./App.vue";
 import { useAiChatStore } from "./stores/aiChat";
+import { useAuthStore } from "./stores/auth";
 
-const wrappers = [];
-const originalInnerWidth = window.innerWidth;
-const originalInnerHeight = window.innerHeight;
-const originalClientWidth = document.documentElement.clientWidth;
+const wrappers=[];
+const originalInnerWidth=window.innerWidth;
+const originalClientWidth=document.documentElement.clientWidth;
 
-function setViewport(width, height, clientWidth = width) {
-  Object.defineProperty(window, "innerWidth", {
-    configurable: true,
-    writable: true,
-    value: width,
-  });
-  Object.defineProperty(window, "innerHeight", {
-    configurable: true,
-    writable: true,
-    value: height,
-  });
-  Object.defineProperty(document.documentElement, "clientWidth", {
-    configurable: true,
-    value: clientWidth,
-  });
-}
+function setViewport(width){Object.defineProperty(window,"innerWidth",{configurable:true,writable:true,value:width});Object.defineProperty(document.documentElement,"clientWidth",{configurable:true,value:width});}
+function mountUserApp(width=1440){setViewport(width);const pinia=createPinia();setActivePinia(pinia);const wrapper=mount(App,{global:{plugins:[pinia],stubs:{AiAssistant:{props:["overlayMode"],template:'<aside data-testid="ai-panel" :data-overlay="String(overlayMode)" />'},RouterView:{template:'<main id="main-content" tabindex="-1" />'}}}});wrappers.push(wrapper);const authStore=useAuthStore(pinia);authStore.accessToken="token";authStore.user={id:1,username:"test1",role:"user"};const aiStore=useAiChatStore(pinia);return{wrapper,aiStore,authStore};}
 
-beforeEach(() => {
-  localStorage.clear();
-  sessionStorage.clear();
-  setViewport(1600, 900);
-});
+beforeEach(()=>{localStorage.clear();sessionStorage.clear();setViewport(1440);});
+afterEach(()=>{wrappers.splice(0).forEach((wrapper)=>wrapper.unmount());setViewport(originalInnerWidth);Object.defineProperty(document.documentElement,"clientWidth",{configurable:true,value:originalClientWidth});});
 
-afterEach(() => {
-  wrappers.splice(0).forEach((wrapper) => wrapper.unmount());
-  setViewport(originalInnerWidth, originalInnerHeight, originalClientWidth);
-});
-
-describe("App AI panel layout", () => {
-  it("publishes a scaled desktop canvas and resets it for compact overlay", async () => {
-    const pinia = createPinia();
-    setActivePinia(pinia);
-    const wrapper = mount(App, {
-      global: {
-        plugins: [pinia],
-        stubs: {
-          AiAssistant: true,
-          RouterView: { template: '<main id="main-content" tabindex="-1" />' },
-        },
-      },
-    });
-    wrappers.push(wrapper);
-
-    const aiStore = useAiChatStore(pinia);
-    aiStore.setPanelWidth(560);
-    aiStore.setOpen(true);
-    await wrapper.vm.$nextTick();
-
-    const shell = wrapper.get(".app-with-ai");
-    const stage = wrapper.get(".app-route-stage");
+describe("App AI workspace layout",()=>{
+  it("reserves a real desktop column without publishing zoom canvas variables",async()=>{
+    const{wrapper,aiStore}=mountUserApp(1440);aiStore.setPanelWidth(520);aiStore.setOpen(true);await wrapper.vm.$nextTick();
+    const shell=wrapper.get(".app-with-ai");
     expect(shell.classes()).toContain("ai-panel-active");
-    expect(stage.attributes("inert")).toBeUndefined();
-    expect(shell.element.style.getPropertyValue("--ai-panel-width")).toBe("560px");
-    expect(shell.element.style.getPropertyValue("--ai-stage-design-width")).toBe(
-      "1440px"
-    );
-    expect(Number(shell.element.style.getPropertyValue("--ai-stage-scale"))).toBeCloseTo(
-      1040 / 1440
-    );
+    expect(shell.element.style.getPropertyValue("--ai-panel-width")).toBe("520px");
+    expect(shell.element.style.getPropertyValue("--ai-stage-scale")).toBe("");
+    expect(wrapper.get(".app-route-stage").attributes("inert")).toBeUndefined();
+    expect(wrapper.get('[data-testid="ai-panel"]').attributes("data-overlay")).toBe("false");
+  });
 
-    setViewport(860, 700);
-    window.dispatchEvent(new Event("resize"));
-    await wrapper.vm.$nextTick();
-
-    expect(shell.element.style.getPropertyValue("--ai-stage-design-width")).toBe(
-      "860px"
-    );
-    expect(shell.element.style.getPropertyValue("--ai-stage-scale")).toBe("1");
+  it("uses an accessible overlay on compact workspaces instead of scaling the page",async()=>{
+    const{wrapper,aiStore}=mountUserApp(900);aiStore.setOpen(true);await wrapper.vm.$nextTick();
+    const stage=wrapper.get(".app-route-stage");
     expect(stage.attributes("inert")).toBe("");
     expect(stage.attributes("aria-hidden")).toBe("true");
+    expect(wrapper.get('[data-testid="ai-panel"]').attributes("data-overlay")).toBe("true");
+    expect(wrapper.get(".app-with-ai").element.style.zoom).toBe("");
   });
 
-  it("uses the content viewport width so the page does not overlap the panel scrollbar", async () => {
-    setViewport(1280, 720, 1265);
-    const pinia = createPinia();
-    setActivePinia(pinia);
-    const wrapper = mount(App, {
-      global: {
-        plugins: [pinia],
-        stubs: {
-          AiAssistant: true,
-          RouterView: { template: '<main id="main-content" tabindex="-1" />' },
-        },
-      },
-    });
-    wrappers.push(wrapper);
-
-    const aiStore = useAiChatStore(pinia);
-    aiStore.setPanelWidth(360);
-    aiStore.setOpen(true);
-    await wrapper.vm.$nextTick();
-
-    const shell = wrapper.get(".app-with-ai");
-    expect(shell.element.style.getPropertyValue("--ai-stage-design-width")).toBe(
-      "1265px"
-    );
-    expect(Number(shell.element.style.getPropertyValue("--ai-stage-scale"))).toBeCloseTo(
-      905 / 1265
-    );
+  it("does not mount the personal health assistant in an institution workspace",async()=>{
+    const{wrapper,authStore}=mountUserApp();authStore.user={id:9,username:"institution1_staff1",role:"institution_admin"};await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-testid="ai-panel"]').exists()).toBe(false);
   });
 });

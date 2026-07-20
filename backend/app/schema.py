@@ -5,7 +5,7 @@ from sqlalchemy import inspect
 from app.extensions import db
 
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 
 
 class SchemaUpgradeRequired(RuntimeError):
@@ -41,11 +41,15 @@ def _schema_shape_issues(connection) -> list[str]:
         for constraint in db.metadata.tables[table_name].constraints:
             if constraint.name and constraint.name.lower() not in normalized_sql:
                 issues.append(f"missing constraint {constraint.name}")
+    if "users" in actual_tables:
+        for constraint in inspector.get_unique_constraints("users"):
+            if tuple(constraint.get("column_names") or ()) == ("email",):
+                issues.append("obsolete unique constraint on users.email")
     return issues
 
 
 def initialize_or_validate_schema() -> None:
-    """Create a fresh v6 schema or reject a non-empty legacy database.
+    """Create a fresh v7 schema or reject a non-empty legacy database.
 
     ``db.create_all`` cannot add columns or replace SQLite CHECK constraints.
     Rejecting legacy files before creating missing tables prevents a partially
@@ -54,7 +58,17 @@ def initialize_or_validate_schema() -> None:
 
     with db.engine.begin() as connection:
         if connection.dialect.name != "sqlite":
-            db.metadata.create_all(bind=connection)
+            tables = {name for name in inspect(connection).get_table_names() if not name.startswith("alembic_")}
+            if not tables:
+                db.metadata.create_all(bind=connection)
+                return
+            issues = _schema_shape_issues(connection)
+            if issues:
+                preview = "; ".join(issues[:5])
+                raise SchemaUpgradeRequired(
+                    f"openGauss/GaussDB schema upgrade required: {preview}. "
+                    "Run the schema v7 Alembic migration before starting the application."
+                )
             return
 
         tables = {
@@ -82,7 +96,7 @@ def initialize_or_validate_schema() -> None:
             if len(issues) > 5:
                 preview += f"; and {len(issues) - 5} more"
             raise SchemaUpgradeRequired(
-                "SQLite schema is marked as v6 but its structure is incomplete: "
+                "SQLite schema is marked as v7 but its structure is incomplete: "
                 f"{preview}. Stop the backend and run "
                 "backend/scripts/upgrade_local_database.py --check-only."
             )

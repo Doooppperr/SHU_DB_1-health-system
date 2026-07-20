@@ -12,7 +12,7 @@
         <div class="register-mode" role="radiogroup" aria-label="注册身份">
           <label :class="{ active: mode === 'user' }">
             <input v-model="mode" type="radio" value="user" />
-            <span><strong>普通用户</strong><small>记录自测并查看自动归档的体检报告与趋势</small></span>
+            <span><strong>普通用户</strong><small>记录自测并查看自动归档的健康数据与健康趋势</small></span>
           </label>
           <label :class="{ active: mode === 'staff' }">
             <input v-model="mode" type="radio" value="staff" />
@@ -23,7 +23,10 @@
         <el-form :model="form" label-position="top" @submit.prevent="onSubmit">
           <div class="auth-form-grid">
             <el-form-item label="用户名" class="auth-form-full"><el-input v-model="form.username" size="large" placeholder="用于登录，注册后可由管理员维护" autocomplete="username" /></el-form-item>
-            <el-form-item label="邮箱（可选）"><el-input v-model="form.email" size="large" placeholder="name@example.com" autocomplete="email" /></el-form-item>
+            <el-form-item label="邮箱" required>
+              <el-input v-model="form.email" size="large" placeholder="name@example.com" autocomplete="email" />
+              <p class="auth-field-tip">用于接收预约和空位提醒；家庭成员或演示账号可以共用同一邮箱。</p>
+            </el-form-item>
             <el-form-item label="手机号（可选）"><el-input v-model="form.phone" size="large" placeholder="请输入手机号" autocomplete="tel" /></el-form-item>
             <el-form-item label="密码" class="auth-form-full"><el-input v-model="form.password" size="large" type="password" show-password placeholder="至少 6 位" autocomplete="new-password" /></el-form-item>
             <el-form-item v-if="mode === 'staff'" label="机构邀请码" class="auth-form-full">
@@ -85,8 +88,12 @@ async function loadCaptcha({ showError = true } = {}) {
 const refreshCaptcha = () => { errorMessage.value = ""; return loadCaptcha(); };
 
 async function onSubmit() {
-  if (!form.username.trim() || form.password.length < 6 || !form.captcha_answer.trim()) {
-    errorMessage.value = "请填写用户名、至少 6 位密码和验证码";
+  if (!form.username.trim() || !form.email.trim() || form.password.length < 6 || !form.captcha_answer.trim()) {
+    errorMessage.value = "请填写用户名、邮箱、至少 6 位密码和验证码";
+    return;
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+    errorMessage.value = "请输入有效的邮箱地址";
     return;
   }
   if (mode.value === "staff" && !form.invite_code.trim()) {

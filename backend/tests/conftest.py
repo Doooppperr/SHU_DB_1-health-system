@@ -25,7 +25,7 @@ def client(app):
             "captcha_answer": captcha["captcha_answer"],
         }
 
-    def register_payload(username, password="secret123", email=None, phone=None):
+    def register_payload(username, password="secret123", email="shared-test@example.test", phone=None):
         captcha_response = test_client.get("/api/auth/captcha")
         assert captcha_response.status_code == 200
         captcha = captcha_response.get_json()

@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.appointments import appointments_bp
 from app.extensions import db
-from app.models import Appointment, Institution, Package
+from app.models import Appointment, AppointmentEvent, Institution, Package
 from app.services.permissions import ROLE_USER, roles_required
 
 
@@ -142,5 +142,10 @@ def cancel_appointment(appointment_id):
     item.status = "cancelled"
     item.active_date_key = None
     item.cancelled_at = datetime.now(timezone.utc)
+    db.session.add(AppointmentEvent(appointment_id=item.id, event_type="cancelled", status_snapshot="cancelled",
+                                    message="预约已取消", actor_user_id=g.current_user.id, occurred_at=item.cancelled_at))
+    from app.booking_v7.routes import _lock_capacity, enqueue_available
+    slot = _lock_capacity(item.institution, item.appointment_date); slot.revision += 1
+    enqueue_available(item.institution, item.appointment_date, slot)
     db.session.commit()
     return {"item": item.to_dict()}, 200

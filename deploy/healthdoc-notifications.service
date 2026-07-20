@@ -1,0 +1,24 @@
+[Unit]
+Description=HealthDoc notification Outbox worker
+After=network-online.target docker.service healthdoc.service
+Wants=network-online.target
+Requires=docker.service healthdoc.service
+PartOf=healthdoc.service
+
+[Service]
+Type=simple
+User=healthdoc
+Group=www-data
+WorkingDirectory=/opt/healthdoc/current/backend
+EnvironmentFile=/etc/healthdoc/healthdoc.env
+ExecStart=/opt/healthdoc/venv/bin/python /opt/healthdoc/current/backend/scripts/notification_worker.py --watch --config production --interval-seconds 5
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/healthdoc/uploads /var/lib/healthdoc/rag
+
+[Install]
+WantedBy=multi-user.target

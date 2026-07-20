@@ -17,10 +17,10 @@ SYSTEM_GUIDE = """
 这是一个体检评价与健康档案系统，主要功能如下：
 1. 用户可通过注册页填写用户名、密码、邮箱或手机号，并完成图片验证码后注册。
 2. 登录后可浏览体检机构和套餐，并记录本人日常测量。
-3. 体检机构负责录入或 OCR 识别报告，提交后按健康身份码自动归档到已注册用户。
-4. 用户可添加亲友；只有对方授权后，才能只读查看对方的健康时间线、报告和指标趋势。
-5. 指标趋势页可选择本人或已授权亲友及指标，查看每日有效值、历史折线和统计值。
-6. 用户收到某机构提交的体检报告后才可以评论；管理员负责评论审核和账号管理。
+3. 体检机构按预约套餐健康领域录入或 OCR 导入健康数据，提交后归档到稳定受检者账号。
+4. 用户可添加亲友；健康数据查看和代为预约是两种独立授权。
+5. 健康趋势页先选择健康领域，再查看多指标独立趋势、来源分轨和检查附件事件。
+6. 用户收到某机构归档的健康数据后才可以评论；管理员负责评论审核和账号管理。
 7. 当前系统没有自助找回密码功能，忘记密码需要联系人工客服。
 """.strip()
 
@@ -44,7 +44,7 @@ FAQ_ITEMS = (
     },
     {
         "keywords": ("上传报告", "ocr", "识别报告", "上传体检"),
-        "answer": "普通用户无需上传体检报告。体检机构录入或 OCR 识别报告并核对后提交，系统会按健康身份码自动归档到对应的已注册用户。",
+        "answer": "普通用户无需上传机构健康数据。体检机构按预约套餐领域录入或 OCR 导入并复核，提交后归档到对应受检者账号。",
     },
     {
         "keywords": ("录入指标", "添加指标", "体检档案", "新建档案"),
@@ -52,11 +52,11 @@ FAQ_ITEMS = (
     },
     {
         "keywords": ("亲友", "授权", "代传", "家人档案"),
-        "answer": "进入“亲友授权”添加亲友。被添加方开启授权后，你可以在健康时间线和指标趋势中只读查看对方数据；不能代传、代记或修改，授权撤销后立即无法继续访问。",
+        "answer": "进入“亲友授权”添加亲友。被添加方可分别授予健康数据查看和代预约权限；两种权限互不包含，撤销后立即按各自边界失效。",
     },
     {
         "keywords": ("趋势", "折线图", "历史指标", "指标变化"),
-        "answer": "登录后进入“指标趋势”，选择本人或已授权亲友及指标，即可查看每日有效值折线和统计值。",
+        "answer": "登录后进入“健康趋势”，选择本人或已授权亲友及健康领域，即可查看同领域多指标的独立趋势和来源分轨。",
     },
     {
         "keywords": ("评论", "评价机构", "为什么不能评论"),
@@ -633,6 +633,7 @@ def build_analysis_facts(
     *,
     max_points_per_indicator=20,
     max_record_metadata=60,
+    domain_id=None,
 ):
     """Create trusted facts from all selected records before involving the model."""
     ordered_records = sorted(records, key=lambda item: (item.exam_date, item.id))
@@ -648,6 +649,9 @@ def build_analysis_facts(
         "records": [],
         "omitted_record_metadata_count": 0,
         "trends": [],
+        "health_domain_id": domain_id,
+        "institution_text_results": [],
+        "selected_assets": [],
     }
     observations_by_code = {}
     numeric_observations_by_code = {}
@@ -661,6 +665,8 @@ def build_analysis_facts(
             "indicators": [],
         }
         for item in record.indicators:
+            if domain_id is not None and item.display_domain_id != domain_id:
+                continue
             definition = item.indicator_dict
             if definition is None:
                 continue
@@ -684,9 +690,9 @@ def build_analysis_facts(
                 "code": definition.code,
                 "name": definition.name,
                 "value": item.value,
-                "unit": definition.unit,
+                "unit": item.normalized_unit or definition.unit,
                 "value_type": definition.value_type,
-                "reference": reference,
+                "reference": item.reference_text or reference,
                 "status": "异常" if item.is_abnormal else "正常",
                 "source": "institution_report",
             }
@@ -703,6 +709,11 @@ def build_analysis_facts(
                 numeric_observations_by_code.setdefault(definition.code, []).append(
                     (observation, numeric_decimal)
                 )
+        for text_result in getattr(record, "text_results", []):
+            if domain_id is None or text_result.health_domain_id == domain_id:
+                facts["institution_text_results"].append({"record_display_id": record.display_id,
+                    "exam_date": record.exam_date.isoformat(), "title": text_result.title,
+                    "body": text_result.body, "source": text_result.source_snapshot or "机构原始结论"})
         facts["records"].append(record_fact)
 
     if len(ordered_records) == 1:

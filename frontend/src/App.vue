@@ -4,7 +4,6 @@
     class="app-with-ai"
     :class="{
       'ai-panel-active': showAi && aiStore.isOpen,
-      'care-stage-active': appLayout.careScaled,
     }"
     :style="aiLayoutStyle"
   >
@@ -15,7 +14,7 @@
     >
       <router-view />
     </div>
-    <AiAssistant v-if="showAi" :overlay-mode="aiLayout.overlay" />
+    <AiAssistant v-if="showAi" :overlay-mode="overlayMode" />
   </div>
 </template>
 
@@ -25,15 +24,11 @@ import { useRoute } from "vue-router";
 
 import AiAssistant from "./components/AiAssistant.vue";
 import { useAiChatStore } from "./stores/aiChat";
-import { useAppearanceStore } from "./stores/appearance";
 import { useAuthStore } from "./stores/auth";
-import { applyCareStageScale, calculateAiStageLayout } from "./utils/aiStageLayout";
 
 const authStore = useAuthStore();
 const aiStore = useAiChatStore();
-const appearanceStore = useAppearanceStore();
 const route = useRoute();
-const guestAiRoutes = new Set(["public-home", "login", "register"]);
 let tableObserver = null;
 let tableResizeObserver = null;
 let viewportResizeObserver = null;
@@ -42,34 +37,19 @@ function getViewportWidth() {
 }
 
 const viewportWidth = ref(getViewportWidth());
-const viewportHeight = ref(window.innerHeight);
 const showAi = computed(() => {
-  if (authStore.accessToken) return authStore.user?.role === "user";
-  return guestAiRoutes.has(route.name);
+  return Boolean(authStore.accessToken && authStore.user?.role === "user");
 });
-const aiLayout = computed(() => calculateAiStageLayout({
-    active: showAi.value && aiStore.isOpen,
-    viewportWidth: viewportWidth.value,
-    viewportHeight: viewportHeight.value,
-    panelWidth: aiStore.panelWidth,
-  }));
-const appLayout = computed(() => applyCareStageScale(
-  aiLayout.value,
-  appearanceStore.careMode
-));
+const overlayMode = computed(() => viewportWidth.value <= 1180);
 const aiOverlayActive = computed(() => (
-  showAi.value && aiStore.isOpen && appLayout.value.overlay
+  showAi.value && aiStore.isOpen && overlayMode.value
 ));
 const aiLayoutStyle = computed(() => ({
-  "--ai-panel-width": `${appLayout.value.panelWidth}px`,
-  "--ai-stage-design-width": `${appLayout.value.designWidth}px`,
-  "--ai-stage-design-height": `${appLayout.value.designHeight}px`,
-  "--ai-stage-scale": String(appLayout.value.scale),
+  "--ai-panel-width": `${Math.min(aiStore.panelWidth, Math.max(380, viewportWidth.value * 0.42))}px`,
 }));
 
 authStore.hydrate();
 aiStore.initialize(authStore.user?.id || null);
-appearanceStore.initialize();
 
 watch(
   () => authStore.user?.id || null,
@@ -132,7 +112,6 @@ function updateTableScrollState(scroller) {
 
 function updateViewportSize() {
   viewportWidth.value = getViewportWidth();
-  viewportHeight.value = window.innerHeight;
 }
 
 onMounted(() => {

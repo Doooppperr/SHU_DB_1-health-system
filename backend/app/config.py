@@ -45,6 +45,7 @@ class Config:
     AI_CONNECT_TIMEOUT_SECONDS = float(os.getenv("AI_CONNECT_TIMEOUT_SECONDS", "5"))
     AI_READ_TIMEOUT_SECONDS = float(os.getenv("AI_READ_TIMEOUT_SECONDS", "30"))
     AI_REQUEST_TIMEOUT_SECONDS = float(os.getenv("AI_REQUEST_TIMEOUT_SECONDS", "60"))
+    AI_SUPPORTS_IMAGES = os.getenv("AI_SUPPORTS_IMAGES", "0").strip().lower() in {"1", "true", "yes", "on"}
     AI_SUPPORT_PHONE = os.getenv("AI_SUPPORT_PHONE", "")
     AI_MAX_HISTORY_MESSAGES = int(os.getenv("AI_MAX_HISTORY_MESSAGES", "20"))
     AI_GUEST_RATE_LIMIT_PER_MINUTE = int(os.getenv("AI_GUEST_RATE_LIMIT_PER_MINUTE", "10"))
@@ -79,6 +80,23 @@ class Config:
     INSTITUTION_IMAGE_MAX_BYTES = int(
         os.getenv("INSTITUTION_IMAGE_MAX_BYTES", str(5 * 1024 * 1024))
     )
+    HEALTH_ASSET_MAX_BYTES = int(os.getenv("HEALTH_ASSET_MAX_BYTES", str(20 * 1024 * 1024)))
+    HEALTH_ASSET_MAX_PAGES = int(os.getenv("HEALTH_ASSET_MAX_PAGES", "50"))
+    HEALTH_ASSET_MAX_PIXELS = int(os.getenv("HEALTH_ASSET_MAX_PIXELS", "40000000"))
+    SMTP_HOST = os.getenv("SMTP_HOST", "")
+    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
+    SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+    SMTP_FROM = os.getenv("SMTP_FROM", "healthdoc@example.test")
+    SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "1").strip().lower() in {"1", "true", "yes", "on"}
+    NOTIFICATION_EMAIL_DRY_RUN = os.getenv("NOTIFICATION_EMAIL_DRY_RUN", "1").strip().lower() in {"1", "true", "yes", "on"}
+    # Optional local/demo mail sink. Outbox rows retain their original account
+    # recipient, while the SMTP envelope is redirected to one tester mailbox.
+    NOTIFICATION_EMAIL_REDIRECT = os.getenv("NOTIFICATION_EMAIL_REDIRECT", "").strip()
+    # Optional shared mailbox used only when creating a fresh local demo set.
+    # It stays outside source control so a tester's real address is never
+    # committed with the deterministic fixtures.
+    DEMO_SHARED_EMAIL = os.getenv("DEMO_SHARED_EMAIL", "demo-shared@example.test").strip().lower()
     INVITE_CODE_BYTES = int(os.getenv("INVITE_CODE_BYTES", "24"))
     REQUIRE_SECURE_DEFAULT_ADMIN = False
 

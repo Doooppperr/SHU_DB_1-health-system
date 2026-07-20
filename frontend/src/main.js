@@ -8,6 +8,7 @@ import { createPinia } from "pinia";
 import router from "./router";
 import { useAppearanceStore } from "./stores/appearance";
 import "./style.css";
+import "./user-platform.css";
 
 const app = createApp(App);
 const pinia = createPinia();

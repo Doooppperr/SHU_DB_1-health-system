@@ -6,10 +6,12 @@ from flask import current_app
 
 from app.extensions import db
 from app.models import (
-    Appointment, FriendRelation, IndicatorCategory, IndicatorDict,
-    Institution, InstitutionReport, Package, PackageChangeRequest, ReportIndicator,
-    SelfMeasurement, User,
+    Appointment, AppointmentEvent, BookingGroup, FriendRelation, HealthDomain,
+    IndicatorCategory, IndicatorDict, IndicatorDomainLink, Institution,
+    InstitutionReport, Package, PackageChangeRequest, PackageVersion,
+    PackageVersionDomain, ReportIndicator, SelfMeasurement, User,
 )
+import uuid
 
 
 INSTITUTION_SEEDS = [
@@ -295,10 +297,158 @@ def seed_indicator_dicts():
 
 def seed_core_data():
     seed_admin_user()
-    seed_institutions_and_packages()
     seed_indicator_dicts()
-    seed_demo_data()
-    seed_demo_workflows()
+    # The v7 snapshot is deliberately built as a coherent platform story
+    # instead of backfilling the old A-E package/status-matrix fixtures.
+    seed_health_domains_and_versions()
+    from app.demo_v7 import (
+        ensure_v7_demo_accounts,
+        ensure_v7_demo_catalog,
+        seed_v7_demo_experience,
+    )
+
+    ensure_v7_demo_catalog()
+    ensure_v7_demo_accounts()
+    seed_v7_demo_experience()
+
+
+HEALTH_DOMAIN_SEEDS = (
+    ("basic", "基础体征与体格", 1),
+    ("cardio", "心脑血管与循环", 2),
+    ("metabolic", "内分泌与代谢", 3),
+    ("digestive", "消化与肝胆胰", 4),
+    ("respiratory", "呼吸系统", 5),
+    ("renal", "肾脏与泌尿", 6),
+    ("hematology", "血液与免疫", 7),
+    ("other", "其他", 8),
+)
+
+INDICATOR_DOMAIN_CODES = {
+    "HEIGHT": ("basic",), "WEIGHT": ("basic", "metabolic"), "BMI": ("basic", "metabolic"),
+    "HR": ("cardio",), "TEMP": ("basic",), "SPO2": ("respiratory",),
+    "FBG": ("metabolic",), "TC": ("metabolic", "cardio"),
+    "TG": ("metabolic", "cardio"), "HDL": ("metabolic", "cardio"),
+    "LDL": ("metabolic", "cardio"), "ALT": ("digestive",),
+    "AST": ("digestive",), "UA": ("renal", "metabolic"), "CREA": ("renal",),
+}
+
+
+def _package_domain_codes(package):
+    text = f"{package.name} {package.focus_area}"
+    if "心脑血管" in text:
+        return ("cardio", "metabolic")
+    if "内分泌" in text or "甲状腺" in text:
+        return ("metabolic",)
+    if "消化" in text or "呼吸" in text:
+        return ("digestive", "respiratory")
+    if "女性" in text:
+        return ("metabolic", "other")
+    return ("basic", "cardio", "metabolic", "digestive", "respiratory", "renal", "hematology")
+
+
+def seed_health_domains_and_versions():
+    domains = {row.code: row for row in HealthDomain.query.all()}
+    for code, name, order in HEALTH_DOMAIN_SEEDS:
+        if code not in domains:
+            row = HealthDomain(code=code, name=name, sort_order=order)
+            db.session.add(row); db.session.flush(); domains[code] = row
+
+    for indicator in IndicatorDict.query.all():
+        if IndicatorDomainLink.query.filter_by(indicator_dict_id=indicator.id).first():
+            continue
+        codes = INDICATOR_DOMAIN_CODES.get(indicator.code, ("other",))
+        for order, code in enumerate(codes):
+            db.session.add(IndicatorDomainLink(
+                indicator_dict_id=indicator.id, health_domain_id=domains[code].id,
+                is_primary=order == 0, sort_order=order,
+            ))
+
+    for package in Package.query.all():
+        version = PackageVersion.query.filter_by(package_id=package.id).order_by(PackageVersion.version_number.desc()).first()
+        if version is None:
+            codes = _package_domain_codes(package)
+            package.package_type = "special" if len(codes) == 1 else "combined"
+            version = PackageVersion(
+                package_id=package.id, version_number=1, package_type=package.package_type,
+                name_snapshot=package.name, price_snapshot=package.price,
+                audience_snapshot=package.audience or package.gender_scope,
+                description_snapshot=package.description,
+                booking_notice_snapshot=package.booking_notice or "具体检查结果以机构实际完成项目为准。",
+            )
+            db.session.add(version); db.session.flush()
+            for order, code in enumerate(codes):
+                db.session.add(PackageVersionDomain(package_version_id=version.id, health_domain_id=domains[code].id, sort_order=order))
+        package.current_version_id = version.id
+
+    db.session.flush()
+    for report in InstitutionReport.query.all():
+        if report.package_version_id is None and report.package is not None:
+            report.package_version_id = report.package.current_version_id
+        allowed = {row.health_domain_id for row in PackageVersionDomain.query.filter_by(package_version_id=report.package_version_id).all()}
+        for indicator in report.indicators:
+            if indicator.display_domain_id is None:
+                links = IndicatorDomainLink.query.filter_by(indicator_dict_id=indicator.indicator_dict_id).order_by(IndicatorDomainLink.is_primary.desc(), IndicatorDomainLink.sort_order).all()
+                match = next((link for link in links if link.health_domain_id in allowed), links[0] if links else None)
+                if match:
+                    indicator.display_domain_id = match.health_domain_id
+                    indicator.original_name = indicator.original_name or indicator.indicator_dict.name
+                    indicator.original_value = indicator.original_value or indicator.value
+                    indicator.original_unit = indicator.original_unit or indicator.indicator_dict.unit
+                    indicator.normalized_unit = indicator.normalized_unit or indicator.indicator_dict.unit
+                    indicator.mapping_status = "legacy_backfill"
+    db.session.commit()
+
+
+def seed_v7_workflow_snapshots():
+    """Backfill v6 appointments as one-person groups and immutable event histories."""
+    for user in User.query.filter(User.email.isnot(None), User.email_verified_at.is_(None)).all():
+        if user.username.startswith("test") or user.username.startswith("institution") or user.username == "demo_admin":
+            user.email_verified_at = user.created_at
+    for appointment in Appointment.query.order_by(Appointment.id).all():
+        package = appointment.package
+        version = (
+            db.session.get(PackageVersion, package.current_version_id)
+            if package and package.current_version_id else None
+        )
+        if appointment.package_version_id is None and version:
+            appointment.package_version_id = version.id
+        if appointment.booked_by_user_id is None:
+            appointment.booked_by_user_id = appointment.user_id
+        if appointment.booking_group_id is None:
+            domains = [row.domain.to_dict() for row in version.domains if row.domain] if version else []
+            group = BookingGroup(
+                group_code=f"BG-LEGACY-{appointment.id:08d}", booked_by_user_id=appointment.user_id,
+                institution_id=appointment.institution_id, package_id=appointment.package_id,
+                package_version_id=version.id if version else None,
+                appointment_date=appointment.appointment_date, party_size=1,
+                package_name_snapshot=appointment.package_name_snapshot,
+                package_price_snapshot=appointment.package_price_snapshot,
+                domain_snapshot=domains,
+                booking_notice_snapshot=version.booking_notice_snapshot if version else None,
+                notice_version_snapshot=version.version_number if version else None,
+                notice_confirmed_at=appointment.created_at,
+                created_at=appointment.created_at,
+            )
+            db.session.add(group); db.session.flush(); appointment.booking_group_id = group.id
+        if not appointment.events:
+            db.session.add(AppointmentEvent(appointment_id=appointment.id, event_type="booked",
+                status_snapshot="unfulfilled", message="预约成功", occurred_at=appointment.created_at))
+            if appointment.attended_at:
+                db.session.add(AppointmentEvent(appointment_id=appointment.id, event_type="attended",
+                    status_snapshot="awaiting_report", message="机构确认到检", occurred_at=appointment.attended_at))
+            if appointment.fulfilled_at:
+                db.session.add(AppointmentEvent(appointment_id=appointment.id, event_type="archived",
+                    status_snapshot="fulfilled", message="健康数据已归档", occurred_at=appointment.fulfilled_at))
+            if appointment.cancelled_at:
+                db.session.add(AppointmentEvent(appointment_id=appointment.id, event_type="cancelled",
+                    status_snapshot="cancelled", message="预约已取消", occurred_at=appointment.cancelled_at))
+            if appointment.invalidated_at:
+                db.session.add(AppointmentEvent(appointment_id=appointment.id, event_type="invalidated",
+                    status_snapshot="invalidated", message="预约已失效", occurred_at=appointment.invalidated_at))
+    for report in InstitutionReport.query.all():
+        if report.package_version_id is None and report.appointment:
+            report.package_version_id = report.appointment.package_version_id
+    db.session.commit()
 
 
 def seed_demo_workflows():

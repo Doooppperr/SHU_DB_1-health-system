@@ -51,6 +51,7 @@ class IndicatorDict(db.Model):
     )
 
     report_indicators = db.relationship("ReportIndicator", back_populates="indicator_dict")
+    domain_links = db.relationship("IndicatorDomainLink", back_populates="indicator", cascade="all, delete-orphan")
 
     def to_dict(self):
         return {
@@ -66,4 +67,10 @@ class IndicatorDict(db.Model):
             "clinical_significance": self.clinical_significance,
             "value_type": self.value_type,
             "allow_self_measurement": self.allow_self_measurement,
+            "domains": [
+                {"id": link.domain.id, "code": link.domain.code, "name": link.domain.name,
+                 "is_primary": link.is_primary, "sort_order": link.sort_order}
+                for link in sorted(self.domain_links, key=lambda row: (not row.is_primary, row.sort_order, row.id))
+                if link.domain
+            ],
         }

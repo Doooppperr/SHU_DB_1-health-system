@@ -65,6 +65,15 @@ def referenced_upload_keys(database_path: Path) -> set[str]:
             key = PurePosixPath(normalized)
             if normalized and not key.is_absolute() and ".." not in key.parts:
                 references.add(key.as_posix())
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "report_assets" in tables:
+            for (storage_key,) in connection.execute("SELECT storage_key FROM report_assets"):
+                if not storage_key:
+                    continue
+                normalized = storage_key.replace("\\", "/").lstrip("/")
+                key = PurePosixPath(normalized)
+                if normalized and not key.is_absolute() and ".." not in key.parts:
+                    references.add(key.as_posix())
     finally:
         connection.close()
     return references

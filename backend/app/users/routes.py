@@ -1,12 +1,13 @@
-from flask import request
+from flask import current_app, request
 
 from app.extensions import db
 from app.models import (
-    Comment, FriendRelation, InstitutionReport,
+    Comment, FriendRelation, InstitutionReport, ReportAsset,
     SelfMeasurement, User,
 )
 from app.services.permissions import ROLE_ADMIN, roles_required
 from app.services.record_files import delete_report_urls
+from app.services.storage import get_storage_backend
 from app.users import users_bp
 
 
@@ -69,6 +70,7 @@ def delete_user(user_id):
         return {"message": "irreversible deletion requires confirm=true"}, 400
 
     report_urls = [row.temporary_file_url for row in InstitutionReport.query.filter_by(matched_user_id=user.id).all()]
+    asset_keys = [row.storage_key for row in db.session.query(ReportAsset).join(InstitutionReport).filter(InstitutionReport.matched_user_id == user.id).all()]
     InstitutionReport.query.filter_by(matched_user_id=user.id).delete(synchronize_session=False)
     SelfMeasurement.query.filter_by(user_id=user.id).delete(synchronize_session=False)
     FriendRelation.query.filter(
@@ -78,4 +80,6 @@ def delete_user(user_id):
     db.session.delete(user)
     db.session.commit()
     delete_report_urls(report_urls)
+    storage = get_storage_backend(current_app.config)
+    for key in asset_keys: storage.delete(key)
     return {"message": "user and all associated business data deleted"}, 200

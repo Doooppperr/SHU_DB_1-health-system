@@ -1,67 +1,320 @@
 <template>
-  <div class="workspace-page">
-    <section class="page-intro">
-      <div><p>先预约，再体检</p><h2>体检预约</h2><span>选择机构、已审核套餐和日期；同一用户同一天只能保留一条有效预约。</span></div>
+  <div class="workspace-page user-platform-page">
+    <section class="user-page-lead">
+      <div>
+        <span class="user-kicker">体检预约</span>
+        <h2>为自己和家人安排一次体检</h2>
+        <p>先选日期和机构，再确认套餐与受检者。同行人会作为一个预约一起提交，不会出现有人成功、有人失败。</p>
+      </div>
     </section>
 
-    <el-card shadow="never">
-      <el-form label-position="top">
-        <div class="responsive-form-grid">
-          <el-form-item label="预约日期" required>
-            <el-date-picker v-model="appointmentDate" type="date" value-format="YYYY-MM-DD" :disabled-date="disabledDate" style="width:100%" @change="loadAvailability" />
+    <el-card shadow="never" class="user-panel booking-flow-card">
+      <el-steps :active="step - 1" finish-status="success" align-center class="booking-steps">
+        <el-step title="选择时间与机构" />
+        <el-step title="选择体检套餐" />
+        <el-step title="确认受检者" />
+      </el-steps>
+
+      <section v-if="step === 1" class="booking-step-panel">
+        <div class="booking-step-heading"><span>第一步</span><h3>什么时候去，想去哪家机构？</h3><p>可预约未来 30 天，选择日期后会显示当天剩余名额。</p></div>
+        <el-form label-position="top">
+          <el-form-item label="体检日期" required>
+            <el-date-picker v-model="form.appointment_date" type="date" value-format="YYYY-MM-DD" :disabled-date="disabledDate" style="width: 100%" @change="dateChanged" />
           </el-form-item>
-          <el-form-item label="体检机构" required>
-            <el-select v-model="institutionId" filterable style="width:100%" @change="packageId=null">
-              <el-option v-for="entry in availability" :key="entry.institution.id" :label="`${entry.institution.name} · ${entry.institution.branch_name}`" :value="entry.institution.id" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="体检套餐" required>
-            <el-select v-model="packageId" style="width:100%" :disabled="!selectedInstitution">
-              <el-option v-for="item in selectedInstitution?.packages || []" :key="item.id" :label="`${item.name} · ¥${Number(item.price).toFixed(2)}`" :value="item.id" />
-            </el-select>
-          </el-form-item>
+          <div v-loading="availabilityLoading" class="booking-institution-grid">
+            <button
+              v-for="option in availability"
+              :key="option.institution.id"
+              type="button"
+              class="booking-choice-card"
+              :class="{ 'is-selected': form.institution_id === option.institution.id, 'is-disabled': option.remaining === 0 }"
+              @click="selectInstitution(option)"
+            >
+              <span class="booking-choice-card__check">{{ form.institution_id === option.institution.id ? "✓" : "院" }}</span>
+              <strong>{{ option.institution.name }}</strong>
+              <small>{{ option.institution.branch_name }}</small>
+              <p>{{ option.remaining == null ? "当天名额充足" : option.remaining ? `当天剩余 ${option.remaining} 个名额` : "当天已约满" }}</p>
+            </button>
+            <el-empty v-if="!availabilityLoading && !availability.length" description="当天暂时没有可预约机构" />
+          </div>
+        </el-form>
+      </section>
+
+      <section v-else-if="step === 2" class="booking-step-panel">
+        <div class="booking-step-heading"><span>第二步</span><h3>选择适合这次需要的套餐</h3><p>{{ selectedInstitution?.institution?.name }} · {{ selectedInstitution?.institution?.branch_name }}</p></div>
+        <div class="booking-package-grid">
+          <button
+            v-for="pkg in selectedInstitution?.packages || []"
+            :key="pkg.id"
+            type="button"
+            class="booking-package-choice"
+            :class="{ 'is-selected': form.package_id === pkg.id }"
+            @click="form.package_id = pkg.id"
+          >
+            <div><el-tag effect="plain">{{ packageTypeLabel(pkg.package_type) }}</el-tag><strong>¥ {{ Number(pkg.price || 0).toFixed(0) }}</strong></div>
+            <h4>{{ pkg.name }}</h4>
+            <p>{{ pkg.audience || genderLabel(pkg.gender_scope) }}</p>
+            <div class="journey-domain-list"><span v-for="domain in pkg.domains || []" :key="domain.id">{{ domain.name }}</span></div>
+            <small>{{ pkg.focus_area }}</small>
+          </button>
         </div>
-        <el-alert v-if="selectedInstitution" :type="selectedInstitution.is_full ? 'warning' : 'success'" :closable="false" show-icon>
-          <template #title>{{ quotaText }}</template>
+      </section>
+
+      <section v-else class="booking-step-panel">
+        <div class="booking-step-heading"><span>第三步</span><h3>确认谁参加这次体检</h3><p>最多 5 人。只有已经授权你代预约的亲友才会出现在这里。</p></div>
+        <el-form label-position="top">
+          <el-form-item label="受检者" required>
+            <el-select v-model="form.participant_user_ids" multiple :multiple-limit="5" style="width: 100%">
+              <el-option v-for="person in participantOptions" :key="person.id" :label="person.label" :value="person.id" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+
+        <div v-if="selectedPackage" class="booking-review-card">
+          <div><span>预约日期</span><strong>{{ formatDate(form.appointment_date) }}</strong></div>
+          <div><span>体检机构</span><strong>{{ selectedInstitution?.institution?.name }} · {{ selectedInstitution?.institution?.branch_name }}</strong></div>
+          <div><span>体检套餐</span><strong>{{ selectedPackage.name }} · ¥ {{ Number(selectedPackage.price || 0).toFixed(0) }} / 人</strong></div>
+          <div><span>受检人数</span><strong>{{ form.participant_user_ids.length }} 人</strong></div>
+        </div>
+
+        <el-alert v-if="selectedPackage" type="info" :closable="false" show-icon>
+          <template #title>预约前请确认</template>
+          <p>{{ selectedPackage.booking_notice || "具体检查安排和注意事项以机构现场说明为准。" }}</p>
         </el-alert>
-        <div style="margin-top:18px;text-align:right">
-          <el-tooltip :content="selectedInstitution?.is_full ? '今日已无预约名额' : ''" :disabled="!selectedInstitution?.is_full">
-            <span><el-button type="primary" :disabled="!canSubmit" :loading="submitting" @click="submitBooking">发送预约</el-button></span>
-          </el-tooltip>
-        </div>
-      </el-form>
+        <el-checkbox v-model="form.notice_confirmed" class="booking-notice-check">我已阅读并确认上述预约与检查须知</el-checkbox>
+        <el-alert v-if="selectedInstitution" :type="enough ? 'success' : 'warning'" :closable="false" :title="quotaText" show-icon />
+      </section>
+
+      <footer class="booking-flow-actions">
+        <el-button v-if="step > 1" @click="step -= 1">上一步</el-button>
+        <span></span>
+        <el-button v-if="step < 3" type="primary" :disabled="!canContinue" @click="step += 1">继续</el-button>
+        <template v-else>
+          <el-button v-if="!enough" @click="joinWaitlist">到空位时提醒我</el-button>
+          <el-button type="primary" :disabled="!canBook" :loading="submitting" @click="book">确认预约</el-button>
+        </template>
+      </footer>
     </el-card>
 
-    <el-card shadow="never" class="table-card">
-      <template #header><strong>我的预约</strong></template>
-      <el-table :data="appointments" v-loading="loadingAppointments" empty-text="暂无预约记录">
-        <el-table-column prop="appointment_date" label="预约日期" width="130" />
-        <el-table-column label="机构" min-width="210"><template #default="scope">{{ scope.row.institution?.name }} · {{ scope.row.institution?.branch_name }}</template></el-table-column>
-        <el-table-column prop="package_name" label="套餐" min-width="160" />
-        <el-table-column label="状态" width="130"><template #default="scope"><el-tag :type="statusType(scope.row.status)">{{ statusLabel(scope.row.status) }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="160"><template #default="scope"><el-button v-if="scope.row.status==='unfulfilled'" link type="danger" @click="cancel(scope.row)">取消预约</el-button><router-link v-if="scope.row.report_id && scope.row.status==='fulfilled'" :to="{name:'report-detail',params:{id:scope.row.report_id}}">查看报告</router-link></template></el-table-column>
-      </el-table>
-    </el-card>
+    <el-alert v-if="errorMessage" :title="errorMessage" type="error" :closable="false" show-icon />
+
+    <section class="booking-management-grid">
+      <el-card shadow="never" class="user-panel">
+        <template #header><div class="user-section-heading"><div><span>我的安排</span><h3>预约记录</h3></div><small>{{ groups.length }} 组</small></div></template>
+        <div class="booking-record-list">
+          <article v-for="group in groups" :key="group.id" class="booking-record-card">
+            <div class="booking-record-card__date"><strong>{{ dayOfMonth(group.appointment_date) }}</strong><span>{{ monthLabel(group.appointment_date) }}</span></div>
+            <div class="booking-record-card__body">
+              <div><el-tag v-for="status in group.status_codes || []" :key="status" :type="appointmentMeta(status).type" effect="light">{{ appointmentMeta(status).label }}</el-tag></div>
+              <h4>{{ group.package?.name || group.package_name_snapshot }}</h4>
+              <p>{{ group.institution?.name }} · {{ group.institution?.branch_name }}</p>
+              <small>{{ (group.participant_names || []).join("、") }} · 共 {{ group.party_size }} 人</small>
+            </div>
+            <el-button v-if="group.can_cancel" link type="danger" @click="cancelGroup(group)">取消整组</el-button>
+          </article>
+          <el-empty v-if="!groups.length" description="还没有预约记录" :image-size="80" />
+        </div>
+      </el-card>
+
+      <el-card shadow="never" class="user-panel">
+        <template #header><div class="user-section-heading"><div><span>空位动态</span><h3>我的提醒</h3></div><small>{{ activeWaitlistCount }} 条生效中</small></div></template>
+        <div class="waitlist-card-list">
+          <article v-for="item in waitlists" :key="item.id" class="waitlist-card">
+            <div><el-tag :type="item.status === 'active' ? 'warning' : 'info'" effect="light">{{ item.status_label || WAITLIST_STATUS[item.status] || "状态更新中" }}</el-tag><h4>{{ item.package?.name }}</h4><p>{{ item.institution?.name }} · {{ formatDate(item.appointment_date) }}</p></div>
+            <el-button v-if="item.status === 'active'" link type="danger" @click="cancelWaitlist(item)">取消提醒</el-button>
+          </article>
+          <el-empty v-if="!waitlists.length" description="没有空位提醒" :image-size="80" />
+        </div>
+      </el-card>
+    </section>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { cancelAppointment, createAppointment, fetchAppointmentAvailability, fetchMyAppointments } from "../api/appointments";
+import { useRoute } from "vue-router";
+import {
+  cancelBookingGroup,
+  cancelWaitlistSubscription,
+  createBookingGroup,
+  createWaitlistSubscription,
+  fetchAppointmentAvailability,
+  fetchBookingGroups,
+  fetchWaitlistSubscriptions,
+} from "../api/appointments";
+import { fetchFriends } from "../api/friends";
+import { useAuthStore } from "../stores/auth";
+import {
+  WAITLIST_STATUS,
+  appointmentMeta,
+  formatDate,
+  genderLabel,
+  packageTypeLabel,
+} from "../utils/userPlatform";
 
-function localDate(offset=0){const value=new Date();value.setDate(value.getDate()+offset);return `${value.getFullYear()}-${String(value.getMonth()+1).padStart(2,'0')}-${String(value.getDate()).padStart(2,'0')}`;}
-const appointmentDate=ref(localDate()),institutionId=ref(null),packageId=ref(null),availability=ref([]),appointments=ref([]),submitting=ref(false),loadingAppointments=ref(false);
-const selectedInstitution=computed(()=>availability.value.find((item)=>item.institution.id===institutionId.value));
-const quotaText=computed(()=>{const item=selectedInstitution.value;if(!item)return "";if(item.daily_limit===null)return "该机构当前不限预约名额";if(item.is_full)return "今日已无预约名额";return `所选日期还剩 ${item.remaining} 个名额（每日上限 ${item.daily_limit}）`;});
-const canSubmit=computed(()=>Boolean(appointmentDate.value&&institutionId.value&&packageId.value&&!selectedInstitution.value?.is_full));
-const statusMap={unfulfilled:"未履约",awaiting_report:"待上传报告",fulfilled:"已履约",invalidated:"已失效",cancelled:"已取消"};
-const statusLabel=(value)=>statusMap[value]||value;
-const statusType=(value)=>({fulfilled:"success",invalidated:"danger",cancelled:"info",awaiting_report:"warning"}[value]||"");
-function disabledDate(value){const start=new Date();start.setHours(0,0,0,0);const end=new Date(start);end.setDate(end.getDate()+30);return value<start||value>end;}
-async function loadAvailability(){if(!appointmentDate.value)return;try{availability.value=(await fetchAppointmentAvailability(appointmentDate.value)).data.items||[];if(!availability.value.some((item)=>item.institution.id===institutionId.value)){institutionId.value=null;packageId.value=null;}}catch(error){ElMessage.error(error?.response?.data?.message||"预约名额加载失败");}}
-async function loadAppointments(){loadingAppointments.value=true;try{appointments.value=(await fetchMyAppointments()).data.items||[];}finally{loadingAppointments.value=false;}}
-async function submitBooking(){if(!canSubmit.value){if(selectedInstitution.value?.is_full)ElMessage.warning("今日已无预约名额");return;}submitting.value=true;try{await createAppointment({appointment_date:appointmentDate.value,institution_id:institutionId.value,package_id:packageId.value});ElMessage.success("预约成功，当前状态为未履约");await Promise.all([loadAvailability(),loadAppointments()]);}catch(error){ElMessage.error(error?.response?.data?.message||"预约失败");await loadAvailability();}finally{submitting.value=false;}}
-async function cancel(item){try{await ElMessageBox.confirm("取消后该名额会立即释放，确认取消预约？","取消预约",{type:"warning"});await cancelAppointment(item.id);ElMessage.success("预约已取消");await Promise.all([loadAvailability(),loadAppointments()]);}catch(error){if(error!=="cancel"&&error!=="close")ElMessage.error(error?.response?.data?.message||"取消失败");}}
-onMounted(()=>Promise.all([loadAvailability(),loadAppointments()]));
+const route = useRoute();
+const auth = useAuthStore();
+const step = ref(1);
+const availability = ref([]);
+const groups = ref([]);
+const waitlists = ref([]);
+const relations = ref([]);
+const submitting = ref(false);
+const availabilityLoading = ref(false);
+const errorMessage = ref("");
+
+function localDate() {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+const form = reactive({
+  appointment_date: route.query.date || localDate(),
+  institution_id: route.query.institution_id ? Number(route.query.institution_id) : null,
+  package_id: route.query.package_id ? Number(route.query.package_id) : null,
+  participant_user_ids: [],
+  notice_confirmed: false,
+});
+const selectedInstitution = computed(() => availability.value.find((item) => item.institution.id === form.institution_id));
+const selectedPackage = computed(() => selectedInstitution.value?.packages.find((item) => item.id === form.package_id));
+const participantOptions = computed(() => [
+  { id: auth.user.id, label: `我本人（${auth.user.real_name || auth.user.username}）` },
+  ...relations.value.filter((item) => item.booking_auth_status).map((item) => ({
+    id: item.friend_user.id,
+    label: `${item.friend_user.real_name || item.friend_user.username}（已授权代预约）`,
+  })),
+]);
+const remaining = computed(() => selectedInstitution.value?.remaining);
+const enough = computed(() => remaining.value == null || remaining.value >= form.participant_user_ids.length);
+const quotaText = computed(() => {
+  if (remaining.value == null) return "当天名额充足，可以提交预约";
+  if (enough.value) return `当天还剩 ${remaining.value} 个名额，可以容纳当前 ${form.participant_user_ids.length} 人`;
+  return `当天只剩 ${remaining.value} 个名额，暂时无法容纳当前 ${form.participant_user_ids.length} 人`;
+});
+const canContinue = computed(() => step.value === 1
+  ? Boolean(form.appointment_date && form.institution_id)
+  : Boolean(form.package_id));
+const canBook = computed(() => Boolean(
+  form.appointment_date
+  && form.institution_id
+  && form.package_id
+  && form.participant_user_ids.length
+  && form.notice_confirmed
+  && enough.value
+));
+const activeWaitlistCount = computed(() => waitlists.value.filter((item) => item.status === "active").length);
+
+function disabledDate(value) {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 30);
+  return value < start || value > end;
+}
+
+function dayOfMonth(value) {
+  return new Date(`${value}T00:00:00`).getDate();
+}
+
+function monthLabel(value) {
+  return new Date(`${value}T00:00:00`).toLocaleDateString("zh-CN", { month: "short" });
+}
+
+function selectInstitution(option) {
+  form.institution_id = option.institution.id;
+  if (!option.packages?.some((item) => item.id === form.package_id)) form.package_id = null;
+}
+
+async function dateChanged() {
+  form.institution_id = null;
+  form.package_id = null;
+  await loadAvailability();
+}
+
+async function loadAvailability() {
+  availabilityLoading.value = true;
+  try {
+    availability.value = (await fetchAppointmentAvailability(form.appointment_date)).data.items || [];
+    if (form.institution_id && !selectedInstitution.value) {
+      form.institution_id = null;
+      form.package_id = null;
+    }
+  } finally {
+    availabilityLoading.value = false;
+  }
+}
+
+async function reload() {
+  const [groupResponse, waitlistResponse] = await Promise.all([fetchBookingGroups(), fetchWaitlistSubscriptions()]);
+  groups.value = groupResponse.data.items || [];
+  waitlists.value = waitlistResponse.data.items || [];
+}
+
+function payload() {
+  return { ...form, participant_user_ids: [...form.participant_user_ids] };
+}
+
+async function book() {
+  submitting.value = true;
+  try {
+    await createBookingGroup(payload());
+    ElMessage.success("预约成功，所有受检者都已加入本次安排");
+    step.value = 1;
+    form.notice_confirmed = false;
+    await Promise.all([loadAvailability(), reload()]);
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.message || "预约没有提交成功，请稍后重试");
+    await loadAvailability();
+  } finally {
+    submitting.value = false;
+  }
+}
+
+async function joinWaitlist() {
+  try {
+    await createWaitlistSubscription(payload());
+    ElMessage.success("空位提醒已开启；收到提醒后仍需回来确认预约");
+    await reload();
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.message || "空位提醒开启失败");
+  }
+}
+
+async function cancelGroup(group) {
+  try {
+    await ElMessageBox.confirm(
+      "这会取消组内所有尚未到检的预约，确认继续吗？",
+      "取消整组预约",
+      { type: "warning", confirmButtonText: "确认取消", cancelButtonText: "保留预约" }
+    );
+    await cancelBookingGroup(group.id);
+    ElMessage.success("整组预约已取消");
+    await Promise.all([loadAvailability(), reload()]);
+  } catch (error) {
+    if (error !== "cancel" && error !== "close") ElMessage.error(error?.response?.data?.message || "取消失败");
+  }
+}
+
+async function cancelWaitlist(item) {
+  try {
+    await cancelWaitlistSubscription(item.id);
+    ElMessage.success("空位提醒已取消");
+    await reload();
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.message || "取消提醒失败");
+  }
+}
+
+onMounted(async () => {
+  try {
+    const friendResponse = await fetchFriends();
+    relations.value = friendResponse.data.outgoing || [];
+    form.participant_user_ids = [auth.user.id];
+    await Promise.all([loadAvailability(), reload()]);
+    if (form.institution_id && selectedInstitution.value) step.value = form.package_id ? 3 : 2;
+  } catch (error) {
+    errorMessage.value = error?.response?.data?.message || "预约信息暂时没有加载成功，请稍后重试";
+  }
+});
 </script>

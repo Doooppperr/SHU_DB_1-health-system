@@ -135,24 +135,17 @@ a {
 
 .app-route-stage {
   width: 100%;
-  transform-origin: top left;
 }
 
-@media (min-width: 861px) {
-  .ai-panel-active,
-  .care-stage-active {
-    overflow-x: hidden;
+@media (min-width: 1181px) {
+  .app-with-ai.ai-panel-active {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--ai-panel-width);
+    align-items: start;
   }
 
-  .ai-panel-active .app-route-stage,
-  .care-stage-active .app-route-stage {
-    width: var(--ai-stage-design-width);
-    min-height: var(--ai-stage-design-height);
-    zoom: var(--ai-stage-scale);
-  }
-
-  .ai-panel-active .app-route-stage > * {
-    min-height: var(--ai-stage-design-height);
+  .app-with-ai.ai-panel-active .app-route-stage {
+    min-width: 0;
   }
 }
 

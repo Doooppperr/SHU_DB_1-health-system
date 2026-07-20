@@ -6,6 +6,13 @@ from .institution import Appointment, Institution, Package, PackageChangeRequest
 from .institution_image import InstitutionImage
 from .institution_invite import InstitutionInvite
 from .user import User
+from .v7 import (
+    AppointmentCapacitySlot, AppointmentEvent, AvailabilityNotificationEvent,
+    BookingGroup, HealthDomain, IndicatorDomainLink, NotificationDelivery,
+    NotificationOutbox, PackageVersion, PackageVersionDomain, ReportAsset,
+    ReportAssetAnnotation, ReportTextResult, WaitlistSubscription,
+    WaitlistSubscriptionParticipant,
+)
 
 # Internal compatibility names for the existing AI reasoning layer only.  The
 # old health_records/health_indicators tables and public CRUD routes are gone.
@@ -16,5 +23,10 @@ __all__ = [
     "User", "Comment", "FriendRelation", "Institution", "InstitutionImage",
     "InstitutionInvite", "Package", "Appointment", "PackageChangeRequest", "IndicatorCategory", "IndicatorDict",
     "SelfMeasurement", "InstitutionReport", "ReportIndicator",
+    "HealthDomain", "IndicatorDomainLink", "PackageVersion", "PackageVersionDomain",
+    "BookingGroup", "AppointmentEvent", "AppointmentCapacitySlot",
+    "WaitlistSubscription", "WaitlistSubscriptionParticipant",
+    "AvailabilityNotificationEvent", "NotificationOutbox", "NotificationDelivery",
+    "ReportTextResult", "ReportAsset", "ReportAssetAnnotation",
     "HealthRecord", "HealthIndicator",
 ]

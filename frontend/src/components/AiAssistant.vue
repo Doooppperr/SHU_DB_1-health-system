@@ -1,26 +1,11 @@
 <template>
-  <button
-    v-if="!aiStore.isOpen"
-    ref="ballButton"
-    class="ai-floating-ball"
-    :style="ballStyle"
-    type="button"
-    aria-label="打开 AI 智能助手"
-    title="AI 智能助手（可拖动）"
-    @pointerdown="startBallDrag"
-    @click="handleBallClick"
-    @keydown.enter.prevent="openAssistant"
-    @keydown.space.prevent="openAssistant"
-  >
-    <span>AI</span>
-  </button>
-
   <transition name="ai-panel-slide">
     <aside
       v-if="aiStore.isOpen"
       id="ai-chat-panel"
       ref="chatPanel"
       class="ai-chat-panel"
+      :class="panelOverlayMode ? 'is-overlay' : 'is-docked'"
       tabindex="-1"
       :role="panelOverlayMode ? 'dialog' : 'complementary'"
       :aria-modal="panelOverlayMode ? 'true' : undefined"
@@ -75,7 +60,7 @@
             我可以解释指标含义和一般生活建议，但不能诊断疾病、推荐处方药或替代医生。
           </p>
           <p v-else>
-            登录前可以询问注册、登录、OCR 上传和其他公开功能。个人指标分析需要先登录。
+            登录前可以询问注册、登录、导入体检报告和其他公开功能。个人指标分析需要先登录。
           </p>
 
           <div class="ai-suggestions">
@@ -480,9 +465,6 @@ const props = defineProps({
   },
 });
 
-const BALL_SIZE = 60;
-const BALL_MARGIN = 14;
-const BALL_TOP_SAFE_AREA = 80;
 const PANEL_KEYBOARD_STEP = 24;
 const PANEL_FOCUSABLE_SELECTOR = [
   "a[href]",
@@ -493,20 +475,16 @@ const PANEL_FOCUSABLE_SELECTOR = [
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
 
-let suppressBallClick = false;
-
 const aiStore = useAiChatStore();
 const authStore = useAuthStore();
 
 const inputMessage = ref("");
 const errorMessage = ref("");
-const ballButton = ref(null);
 const chatPanel = ref(null);
 const composerInput = ref(null);
 const messageArea = ref(null);
 const analysisCard = ref(null);
 const recordPickerCard = ref(null);
-const ballPosition = ref({ x: 0, y: 0 });
 function getViewportWidth() {
   return document.documentElement?.clientWidth || window.innerWidth;
 }
@@ -567,8 +545,8 @@ const messageActionsLocked = computed(
 
 const suggestions = computed(() =>
   authenticated.value
-    ? ["这份报告里的异常指标是什么意思？", "如何理解指标参考范围？", "OCR 上传后怎样确认指标？"]
-    : ["如何注册账号？", "体检报告怎样上传？", "亲友授权有什么作用？"]
+    ? ["这份报告里的异常指标是什么意思？", "如何理解指标参考范围？", "导入体检报告后怎样确认识别结果？"]
+    : ["如何注册账号？", "健康数据如何归档？", "亲友授权有什么作用？"]
 );
 
 const selectedOwnerId = computed(() => {
@@ -596,11 +574,6 @@ const recordGroups = computed(() => {
   return [...groups.values()];
 });
 
-const ballStyle = computed(() => ({
-  left: `${ballPosition.value.x}px`,
-  top: `${ballPosition.value.y}px`,
-}));
-
 async function focusComposer() {
   await nextTick();
   if (recordContextActive.value) return;
@@ -611,20 +584,8 @@ async function focusComposer() {
   }
 }
 
-function openAssistant() {
-  aiStore.setOpen(true);
-}
-
 function closeAssistant() {
   aiStore.setOpen(false);
-}
-
-function handleBallClick(event) {
-  if (suppressBallClick) {
-    event.preventDefault();
-    return;
-  }
-  openAssistant();
 }
 
 function trapPanelFocus(event) {
@@ -668,72 +629,6 @@ function handlePanelEscape(event) {
 async function selectSuggestion(question) {
   inputMessage.value = question;
   await focusComposer();
-}
-
-function clampBall(position) {
-  const maxY = Math.max(BALL_MARGIN, window.innerHeight - BALL_SIZE - BALL_MARGIN);
-  const minY = Math.min(BALL_TOP_SAFE_AREA, maxY);
-  return {
-    x: Math.min(
-      Math.max(BALL_MARGIN, position.x),
-      Math.max(BALL_MARGIN, window.innerWidth - BALL_SIZE - BALL_MARGIN)
-    ),
-    y: Math.min(
-      Math.max(minY, position.y),
-      maxY
-    ),
-  };
-}
-
-function initializeBallPosition() {
-  const saved = aiStore.ballPosition;
-  const initial =
-    saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)
-      ? saved
-      : {
-          x: window.innerWidth - BALL_SIZE - 28,
-          y: window.innerHeight - BALL_SIZE - 100,
-        };
-  ballPosition.value = clampBall(initial);
-  aiStore.setBallPosition(ballPosition.value);
-}
-
-function startBallDrag(event) {
-  if (event.button !== 0) {
-    return;
-  }
-  event.preventDefault();
-  const start = { x: event.clientX, y: event.clientY };
-  const origin = { ...ballPosition.value };
-  let moved = false;
-
-  const move = (moveEvent) => {
-    const deltaX = moveEvent.clientX - start.x;
-    const deltaY = moveEvent.clientY - start.y;
-    if (Math.hypot(deltaX, deltaY) > 5) {
-      moved = true;
-    }
-    ballPosition.value = clampBall({ x: origin.x + deltaX, y: origin.y + deltaY });
-  };
-
-  const finish = () => {
-    window.removeEventListener("pointermove", move);
-    window.removeEventListener("pointerup", finish);
-    window.removeEventListener("pointercancel", finish);
-    aiStore.setBallPosition(ballPosition.value);
-    if (!moved) {
-      aiStore.setOpen(true);
-    } else {
-      suppressBallClick = true;
-      window.setTimeout(() => {
-        suppressBallClick = false;
-      }, 0);
-    }
-  };
-
-  window.addEventListener("pointermove", move);
-  window.addEventListener("pointerup", finish);
-  window.addEventListener("pointercancel", finish);
 }
 
 function startResize(event) {
@@ -946,8 +841,6 @@ async function confirmEndConversation() {
 
 function handleViewportResize() {
   viewportWidth.value = getViewportWidth();
-  ballPosition.value = clampBall(ballPosition.value);
-  aiStore.setBallPosition(ballPosition.value);
   if (!panelOverlayMode.value) {
     aiStore.setPanelWidth(
       Math.min(Math.max(PANEL_MIN_WIDTH, aiStore.panelWidth), panelMaxWidth.value)
@@ -961,9 +854,6 @@ watch(
     if (isOpen) {
       scrollToBottom();
       await focusComposer();
-    } else {
-      await nextTick();
-      ballButton.value?.focus({ preventScroll: true });
     }
   }
 );
@@ -1017,7 +907,6 @@ onMounted(() => {
   if (!panelOverlayMode.value) {
     aiStore.setPanelWidth(panelWidthNow.value);
   }
-  initializeBallPosition();
   window.addEventListener("resize", handleViewportResize);
   if (aiStore.isOpen) {
     scrollToBottom();
@@ -1031,46 +920,11 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.ai-floating-ball {
-  position: fixed;
-  z-index: 1850;
-  width: 60px;
-  height: 60px;
-  padding: 0;
-  border: 1px solid var(--color-accent, #0b7a6b);
-  border-radius: 50%;
-  color: var(--color-accent-strong, #075e54);
-  background: var(--color-accent-soft, #e5f3f0);
-  box-shadow: var(--shadow-md, 0 12px 32px rgb(29 29 31 / 16%));
-  cursor: grab;
-  touch-action: none;
-  user-select: none;
-}
-
-.ai-floating-ball:focus-visible,
 .ai-resize-handle:focus-visible,
 .ai-message-area:focus-visible,
 .ai-suggestions button:focus-visible {
   outline: 3px solid var(--color-focus, #1677ff);
   outline-offset: 3px;
-}
-
-.ai-floating-ball:active {
-  cursor: grabbing;
-  transform: scale(0.97);
-}
-
-.ai-floating-ball span {
-  display: grid;
-  place-items: center;
-  width: 46px;
-  height: 46px;
-  margin: 7px;
-  border: 1px solid var(--color-accent, #0b7a6b);
-  border-radius: 50%;
-  font-size: var(--text-lg, 1.125rem);
-  font-weight: 800;
-  letter-spacing: 0.03em;
 }
 
 .ai-chat-panel {
@@ -1089,6 +943,19 @@ onBeforeUnmount(() => {
   box-shadow: var(--shadow-md, -12px 0 36px rgb(29 29 31 / 16%));
   outline: none;
   overscroll-behavior: contain;
+}
+
+.ai-chat-panel.is-docked {
+  position: sticky;
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  width: 100%;
+  box-shadow: -8px 0 24px rgb(29 29 31 / 8%);
+}
+
+.ai-chat-panel.is-overlay {
+  position: fixed;
 }
 
 .ai-resize-handle {
@@ -1674,14 +1541,9 @@ onBeforeUnmount(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ai-floating-ball,
   .ai-panel-slide-enter-active,
   .ai-panel-slide-leave-active {
     transition: none;
-  }
-
-  .ai-floating-ball:active {
-    transform: none;
   }
 
   .ai-message-area {

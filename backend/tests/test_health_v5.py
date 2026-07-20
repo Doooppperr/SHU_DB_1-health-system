@@ -46,7 +46,11 @@ def create_locked_report(client, user_headers, org_headers, institution_id, pack
 
 def test_health_identity_profile_and_multi_institution_accounts(app, client):
     captcha = client.get("/api/auth/captcha").get_json()
-    registered = client.post("/api/auth/register", json={"username": "new-person", "password": "secret123", "captcha_id": captcha["captcha_id"], "captcha_answer": captcha["captcha_answer"]})
+    missing_email = client.post("/api/auth/register", json={"username": "no-email", "password": "secret123", "captcha_id": captcha["captcha_id"], "captcha_answer": captcha["captcha_answer"]})
+    assert missing_email.status_code == 400 and "邮箱" in missing_email.get_json()["message"]
+    invalid_email = client.post("/api/auth/register", json={"username": "bad-email", "email": "not-an-email", "password": "secret123", "captcha_id": captcha["captcha_id"], "captcha_answer": captcha["captcha_answer"]})
+    assert invalid_email.status_code == 400 and "有效" in invalid_email.get_json()["message"]
+    registered = client.post("/api/auth/register", json={"username": "new-person", "email": "shared-registration@example.test", "password": "secret123", "captcha_id": captcha["captcha_id"], "captcha_answer": captcha["captcha_answer"]})
     assert registered.status_code == 201
     token = {"Authorization": f"Bearer {registered.get_json()['access_token']}"}
     health_id = registered.get_json()["user"]["health_id"]
@@ -54,12 +58,22 @@ def test_health_identity_profile_and_multi_institution_accounts(app, client):
     assert client.put("/api/profile/me", headers=token, json={"health_id": "HID-FORGED1"}).status_code == 409
     profile = client.put("/api/profile/me", headers=token, json={"real_name": "新用户", "birth_date": "1990-02-03", "gender": "female"})
     assert profile.status_code == 200 and profile.get_json()["item"]["health_id"] == health_id
+    bound = client.put("/api/profile/me", headers=token, json={"email": "first@example.test"})
+    assert bound.status_code == 200 and bound.get_json()["item"]["email_verified_at"] is None
+    with app.app_context():
+        person = User.query.filter_by(username="new-person").first()
+        person.email_verified_at = datetime.now(timezone.utc)
+        db.session.commit()
+    unchanged = client.put("/api/profile/me", headers=token, json={"email": "FIRST@example.test", "phone": "13800000000"})
+    assert unchanged.status_code == 200 and unchanged.get_json()["item"]["email_verified_at"] is not None
+    changed = client.put("/api/profile/me", headers=token, json={"email": "second@example.test"})
+    assert changed.status_code == 200 and changed.get_json()["item"]["email_verified_at"] is None
 
     admin = login(client, "admin", "admin123")
     with app.app_context(): institution_id = Institution.query.first().id
     invite = client.post(f"/api/admin/institutions/{institution_id}/invite", headers=admin).get_json()["invite_code"]
     captcha = client.get("/api/auth/captcha").get_json()
-    staff = client.post("/api/auth/register", json={"username": "third-staff", "password": "secret123", "invite_code": invite, "captcha_id": captcha["captcha_id"], "captcha_answer": captcha["captcha_answer"]})
+    staff = client.post("/api/auth/register", json={"username": "third-staff", "email": "shared-registration@example.test", "password": "secret123", "invite_code": invite, "captcha_id": captcha["captcha_id"], "captcha_answer": captcha["captcha_answer"]})
     assert staff.status_code == 201 and staff.get_json()["user"]["role"] == "institution_admin"
     with app.app_context(): assert User.query.filter_by(managed_institution_id=institution_id, role="institution_admin").count() == 3
 

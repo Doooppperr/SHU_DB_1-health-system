@@ -4,6 +4,8 @@ set -euo pipefail
 archive=${1:-}
 release_id=${2:-}
 demo_database=${3:-}
+demo_assets=${4:-}
+mail_settings=${5:-}
 
 if [[ ! "$archive" =~ ^/home/[^/]+/healthdoc-app-[0-9]{8}T[0-9]{6}Z\.tar\.gz$ ]]; then
     echo "Refusing unexpected archive path: $archive" >&2
@@ -27,13 +29,29 @@ if [[ -n "$demo_database" ]]; then
         exit 2
     fi
 fi
+if [[ -n "$demo_assets" ]]; then
+    if [[ ! "$demo_assets" =~ ^/home/[^/]+/healthdoc-demo-assets-[0-9]{8}T[0-9]{6}Z\.tar\.gz$ || ! -f "$demo_assets" ]]; then
+        echo "Refusing unexpected demo asset archive: $demo_assets" >&2
+        exit 2
+    fi
+fi
+if [[ -n "$mail_settings" ]]; then
+    if [[ ! "$mail_settings" =~ ^/home/[^/]+/healthdoc-mail-[0-9]{8}T[0-9]{6}Z\.env$ || ! -f "$mail_settings" ]]; then
+        echo "Refusing unexpected mail settings file: $mail_settings" >&2
+        exit 2
+    fi
+fi
+if [[ -n "$demo_database" && -z "$demo_assets" ]]; then
+    echo "Demo database sync requires the matching synthetic asset archive." >&2
+    exit 2
+fi
 
 release="/opt/healthdoc/releases/$release_id"
 previous=$(readlink -f /opt/healthdoc/current 2>/dev/null || true)
 env_file=/etc/healthdoc/healthdoc.env
 rag_root=/var/lib/healthdoc/rag
 env_backup=$(mktemp /tmp/healthdoc-env.XXXXXX)
-trap 'rm -f "$env_backup"' EXIT
+trap 'rm -f "$env_backup" "$mail_settings" "$demo_assets" "$demo_database"' EXIT
 
 if [[ ! -f "$env_file" ]]; then
     echo "Production environment file is missing: $env_file" >&2
@@ -48,6 +66,23 @@ upsert_env() {
         sed -i "s|^${key}=.*$|${key}=${value}|" "$env_file"
     else
         printf '%s=%s\n' "$key" "$value" >>"$env_file"
+    fi
+}
+
+restore_uploads_backup() {
+    if [[ -z "${backup_root:-}" || ! -f "$backup_root/uploads.tar.gz" ]]; then
+        return 0
+    fi
+    rm -rf /var/lib/healthdoc/uploads
+    tar -C /var/lib/healthdoc -xzf "$backup_root/uploads.tar.gz"
+    chown -R healthdoc:www-data /var/lib/healthdoc/uploads
+}
+
+start_current_services() {
+    systemctl start healthdoc.service
+    if systemctl cat healthdoc-notifications.service >/dev/null 2>&1 \
+        && [[ -f /opt/healthdoc/current/backend/scripts/notification_worker.py ]]; then
+        systemctl start healthdoc-notifications.service
     fi
 }
 
@@ -125,6 +160,7 @@ if [[ -n "$demo_database" ]]; then
     fi
 
     systemctl stop healthdoc.service
+    systemctl stop healthdoc-notifications.service 2>/dev/null || true
     docker stop healthdoc-gaussdb >/dev/null
     database_backup="$backup_root/opengauss.tar.gz"
     tar -C /var/lib/healthdoc -czf "$database_backup" opengauss
@@ -157,11 +193,44 @@ if [[ -n "$demo_database" ]]; then
         echo "Demo database import failed; restoring the pre-release database." >&2
         unset TARGET_DATABASE_URL DATABASE_URL
         restore_database_backup
-        systemctl start healthdoc.service
+        restore_uploads_backup
+        start_current_services
         exit 1
     fi
     unset TARGET_DATABASE_URL DATABASE_URL
-    rm -f "$demo_database"
+    unexpected_assets=$(tar -tzf "$demo_assets" | grep -Ev '^(institutions/demo-v7|health-assets/demo-v7)(/|/[^/]+\.png)?$' || true)
+    asset_count=$(tar -tzf "$demo_assets" | grep -Ec '\.png$' || true)
+    if [[ -n "$unexpected_assets" || "$asset_count" != "9" ]]; then
+        echo "Demo asset archive contains an unexpected path; restoring the pre-release database." >&2
+        restore_database_backup
+        restore_uploads_backup
+        start_current_services
+        exit 1
+    fi
+    rm -rf /var/lib/healthdoc/uploads
+    install -d -o healthdoc -g www-data -m 750 /var/lib/healthdoc/uploads
+    tar -xzf "$demo_assets" -C /var/lib/healthdoc/uploads
+    chown -R healthdoc:www-data /var/lib/healthdoc/uploads
+    find /var/lib/healthdoc/uploads -type d -exec chmod 750 {} +
+    find /var/lib/healthdoc/uploads -type f -exec chmod 640 {} +
+    test "$(find /var/lib/healthdoc/uploads -type f -name '*.png' | wc -l)" = "9"
+    rm -f "$demo_database" "$demo_assets"
+fi
+
+if [[ -n "$mail_settings" ]]; then
+    while IFS='=' read -r key value; do
+        [[ -z "$key" ]] && continue
+        case "$key" in
+            SMTP_HOST|SMTP_PORT|SMTP_USERNAME|SMTP_PASSWORD|SMTP_FROM|SMTP_USE_TLS|NOTIFICATION_EMAIL_DRY_RUN|NOTIFICATION_EMAIL_REDIRECT)
+                upsert_env "$key" "$value"
+                ;;
+            *)
+                echo "Unexpected key in mail settings: $key" >&2
+                exit 2
+                ;;
+        esac
+    done <"$mail_settings"
+    rm -f "$mail_settings"
 fi
 
 install -d -o healthdoc -g www-data -m 750 \
@@ -194,8 +263,9 @@ if [[ "$rag_sync_status" != 0 ]]; then
     rm -f "$env_backup"
     if [[ -n "$database_backup" && -f "$database_backup" ]]; then
         restore_database_backup
+        restore_uploads_backup
     fi
-    systemctl start healthdoc.service
+    start_current_services
     if [[ -n "$demo_database" ]]; then
         rm -f "$demo_database"
     fi
@@ -215,8 +285,12 @@ find /var/www/html -type f -exec chmod 644 {} +
 
 install -o root -g root -m 644 \
     "$release/deploy/healthdoc.service" /etc/systemd/system/healthdoc.service
+install -o root -g root -m 644 \
+    "$release/deploy/healthdoc-notifications.service" /etc/systemd/system/healthdoc-notifications.service
 systemctl daemon-reload
+systemctl enable healthdoc-notifications.service >/dev/null
 systemctl restart healthdoc.service
+systemctl restart healthdoc-notifications.service
 healthy=0
 for _ in $(seq 1 30); do
     if curl -fsS http://127.0.0.1:5050/api/health >/dev/null; then
@@ -226,11 +300,18 @@ for _ in $(seq 1 30); do
     sleep 1
 done
 
+if ! systemctl is-active --quiet healthdoc-notifications.service; then
+    journalctl -u healthdoc-notifications.service -n 80 --no-pager >&2 || true
+    healthy=0
+fi
+
 if [[ "$healthy" != 1 ]]; then
     journalctl -u healthdoc.service -n 80 --no-pager >&2 || true
     systemctl stop healthdoc.service || true
+    systemctl stop healthdoc-notifications.service || true
     if [[ -n "$database_backup" && -f "$database_backup" ]]; then
         restore_database_backup
+        restore_uploads_backup
     fi
     cp -p "$env_backup" "$env_file"
     if [[ -n "$previous" && -d "$previous" ]]; then
@@ -240,6 +321,11 @@ if [[ "$healthy" != 1 ]]; then
         cp -a "$previous/frontend/dist/." /var/www/html/
         chown -R root:www-data /var/www/html
         systemctl restart healthdoc.service
+        if [[ -f "$previous/backend/scripts/notification_worker.py" ]]; then
+            systemctl restart healthdoc-notifications.service
+        else
+            systemctl disable healthdoc-notifications.service >/dev/null 2>&1 || true
+        fi
     fi
     echo "Health check failed; the previous release was restored." >&2
     exit 1

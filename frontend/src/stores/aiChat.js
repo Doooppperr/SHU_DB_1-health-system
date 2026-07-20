@@ -10,7 +10,6 @@ import { AI_SESSION_PREFIX } from "../utils/aiSession";
 
 
 const PANEL_WIDTH_KEY = "health-ai-panel-width";
-const BALL_POSITION_KEY = "health-ai-ball-position";
 const MAX_STORED_MESSAGES = 40;
 const AI_SESSION_SCHEMA_VERSION = 2;
 const MAX_HISTORY_CONTENT_CHARS = 4000;
@@ -204,7 +203,6 @@ export const useAiChatStore = defineStore("ai-chat", {
     panelWidth:
       Number(localStorage.getItem(PANEL_WIDTH_KEY)) ||
       Math.min(640, Math.max(360, Math.round(window.innerWidth / 3))),
-    ballPosition: readJson(localStorage, BALL_POSITION_KEY, null),
     messages: [],
     summary: "",
     selectedRecordIds: [],
@@ -285,11 +283,6 @@ export const useAiChatStore = defineStore("ai-chat", {
     setPanelWidth(width) {
       this.panelWidth = Math.round(width);
       localStorage.setItem(PANEL_WIDTH_KEY, String(this.panelWidth));
-    },
-
-    setBallPosition(position) {
-      this.ballPosition = position;
-      localStorage.setItem(BALL_POSITION_KEY, JSON.stringify(position));
     },
 
     setSelectedRecordIds(ids) {

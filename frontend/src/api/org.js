@@ -51,6 +51,10 @@ export const updateOrgReport = (id, payload) => http.put(`/org/reports/${id}`, p
 export const addOrgReportIndicator = (id, payload) => http.post(`/org/reports/${id}/indicators`, payload);
 export const updateOrgReportIndicator = (id, indicatorId, payload) => http.put(`/org/reports/${id}/indicators/${indicatorId}`, payload);
 export const deleteOrgReportIndicator = (id, indicatorId) => http.delete(`/org/reports/${id}/indicators/${indicatorId}`);
+export const addOrgTextResult = (id, payload) => http.post(`/org/health-data/${id}/text-results`, payload);
+export const deleteOrgTextResult = (id, resultId) => http.delete(`/org/health-data/${id}/text-results/${resultId}`);
+export function uploadOrgHealthAsset(id, file, fields) { const form=new FormData(); form.append("file",file); Object.entries(fields).forEach(([k,v])=>form.append(k,v??"")); return http.post(`/org/health-data/${id}/assets`,form,{headers:{"Content-Type":"multipart/form-data"}}); }
+export const deleteOrgHealthAsset = (id, assetId) => http.delete(`/org/health-data/${id}/assets/${assetId}`);
 export const lockOrgReport = (id) => http.post(`/org/reports/${id}/lock`);
 export const submitOrgReport = (id) => http.post(`/org/reports/${id}/submit`);
 export function uploadOrgReportOcr(file, fields) {

@@ -36,7 +36,10 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=True)
+    # Email is a notification destination, not an account identifier. Families
+    # and local demonstrations may intentionally share one mailbox.
+    email = db.Column(db.String(120), nullable=True, index=True)
+    email_verified_at = db.Column(db.DateTime(timezone=True), nullable=True)
     phone = db.Column(db.String(30), nullable=True)
     role = db.Column(db.String(20), default="user", nullable=False)
     managed_institution_id = db.Column(
@@ -89,6 +92,7 @@ class User(db.Model):
             "id": self.id,
             "username": self.username,
             "email": self.email,
+            "email_verified_at": self.email_verified_at.isoformat() if self.email_verified_at else None,
             "phone": self.phone,
             "role": self.role,
             "is_active": self.is_active,

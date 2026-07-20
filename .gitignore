@@ -12,13 +12,24 @@ frontend/dist/
 frontend/coverage/
 
 # Local runtime files
-backend/uploads/
+# Runtime uploads stay private/ignored. The deterministic, watermarked v7
+# fixtures are the only exception so a fresh clone matches the tracked demo DB.
+backend/uploads/*
+!backend/uploads/institutions/
+backend/uploads/institutions/*
+!backend/uploads/institutions/demo-v7/
+!backend/uploads/institutions/demo-v7/*.png
+!backend/uploads/health-assets/
+backend/uploads/health-assets/*
+!backend/uploads/health-assets/demo-v7/
+!backend/uploads/health-assets/demo-v7/*.png
 backend/.env
 backend/.env.*
 !backend/.env.example
 backend/instance/*.db
 backend/instance/*.sqlite
 backend/instance/*.sqlite3
+backend/instance/*.zip
 # The repository intentionally carries one synthetic demo snapshot. Timestamped
 # migration/refresh backups remain ignored by the patterns above.
 !backend/instance/health_system.db

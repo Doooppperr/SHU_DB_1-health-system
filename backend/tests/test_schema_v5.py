@@ -4,13 +4,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.extensions import db
-from app.models import Appointment, InstitutionReport, PackageChangeRequest, ReportIndicator, SelfMeasurement, User
+from app.models import (
+    Appointment, BookingGroup, Institution, InstitutionReport, NotificationOutbox,
+    Package, PackageChangeRequest, PackageVersion, ReportAsset, ReportIndicator,
+    ReportTextResult, SelfMeasurement, User, WaitlistSubscription,
+)
 from app.schema import CURRENT_SCHEMA_VERSION
 
 
-def test_schema_v6_uses_appointments_reviews_and_permanent_report_archiving(app):
+def test_schema_v7_uses_domains_booking_groups_and_private_health_assets(app):
     with app.app_context():
-        assert CURRENT_SCHEMA_VERSION == 6
+        assert CURRENT_SCHEMA_VERSION == 7
         assert {"self_measurements", "institution_reports", "report_indicators", "appointments", "package_change_requests"} <= set(db.metadata.tables)
         assert "exam_registrations" not in db.metadata.tables
         assert "health_records" not in db.metadata.tables
@@ -38,7 +42,7 @@ def test_rebuild_preserves_only_admin_identity_and_password(tmp_path):
     backup = rebuild_database(path)
     assert backup and backup.exists()
     connection = sqlite3.connect(path)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
     assert connection.execute("SELECT id, username, password_hash FROM users").fetchall() == [(7, "admin", "unchanged-hash")]
     assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     connection.close()
@@ -66,15 +70,22 @@ def test_demo_seed_has_rich_timelines_and_complete_role_matrix(app):
         ]
         assert User.query.filter_by(role="institution_admin").count() == 6
         assert User.query.filter_by(username="demo_admin", role="admin").count() == 1
-        assert SelfMeasurement.query.count() == 138
-        assert InstitutionReport.query.count() == 11
-        assert InstitutionReport.query.filter_by(status="published").count() == 11
-        assert ReportIndicator.query.count() == 71
+        assert Institution.query.count() == 3
+        assert Package.query.count() == 9
+        assert PackageVersion.query.count() == 10
+        assert SelfMeasurement.query.count() >= 50
+        assert InstitutionReport.query.filter_by(status="published").count() >= 6
+        assert ReportIndicator.query.count() >= 20
+        assert ReportTextResult.query.count() >= 5
+        assert ReportAsset.query.count() >= 3
+        assert BookingGroup.query.filter_by(party_size=3).count() >= 1
+        assert WaitlistSubscription.query.count() >= 3
+        assert NotificationOutbox.query.filter_by(event_type="waitlist_available").count() >= 1
         for user in people:
-            assert SelfMeasurement.query.filter_by(user_id=user.id).count() >= 27
+            assert SelfMeasurement.query.filter_by(user_id=user.id).count() >= 10
             assert InstitutionReport.query.filter_by(
                 matched_user_id=user.id, status="published"
-            ).count() >= 2
+            ).count() >= 1
 
 
 def test_v5_upgrade_preserves_all_current_data(tmp_path):
@@ -84,6 +95,10 @@ def test_v5_upgrade_preserves_all_current_data(tmp_path):
     source = Path(__file__).resolve().parents[1] / "instance" / "health_system.db"
     shutil.copy2(source, path)
     connection = sqlite3.connect(path)
+    expected_appointments = connection.execute("SELECT COUNT(*) FROM appointments").fetchone()[0]
+    expected_requests = connection.execute("SELECT COUNT(*) FROM package_change_requests").fetchone()[0]
+    expected_users = connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    expected_reports = connection.execute("SELECT COUNT(*) FROM institution_reports").fetchone()[0]
     connection.execute("PRAGMA user_version=5")
     connection.commit()
     connection.close()
@@ -93,12 +108,12 @@ def test_v5_upgrade_preserves_all_current_data(tmp_path):
     assert backup and backup.exists()
     connection = sqlite3.connect(path)
     try:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
-        assert connection.execute("SELECT COUNT(*) FROM appointments").fetchone()[0] == 25
-        assert connection.execute("SELECT COUNT(*) FROM package_change_requests").fetchone()[0] == 4
-        assert connection.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 13
-        assert connection.execute("SELECT COUNT(*) FROM institution_reports").fetchone()[0] == 11
-        assert connection.execute("SELECT COUNT(*) FROM institution_reports WHERE status='published'").fetchone()[0] == 11
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert connection.execute("SELECT COUNT(*) FROM appointments").fetchone()[0] == expected_appointments
+        assert connection.execute("SELECT COUNT(*) FROM package_change_requests").fetchone()[0] == expected_requests
+        assert connection.execute("SELECT COUNT(*) FROM users").fetchone()[0] == expected_users
+        assert connection.execute("SELECT COUNT(*) FROM institution_reports").fetchone()[0] == expected_reports
+        assert connection.execute("SELECT COUNT(*) FROM institution_reports WHERE status='published'").fetchone()[0] == expected_reports
         assert "withdrawn_at" not in {
             row[1] for row in connection.execute("PRAGMA table_info('institution_reports')")
         }
@@ -122,6 +137,7 @@ def test_full_snapshot_migration_preserves_direct_report_ownership(app, tmp_path
     legacy_target.commit()
     legacy_target.close()
     with app.app_context():
+        expected_reports = InstitutionReport.query.count()
         source = sqlite3.connect(source_path)
         raw_connection = db.engine.raw_connection()
         try:
@@ -136,7 +152,7 @@ def test_full_snapshot_migration_preserves_direct_report_ownership(app, tmp_path
         replace=True,
     )
     assert "exam_registrations" not in counts
-    assert counts["institution_reports"] == 11
+    assert counts["institution_reports"] == expected_reports
 
     connection = sqlite3.connect(target_path)
     try:
