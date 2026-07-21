@@ -5,6 +5,7 @@ import threading
 import time
 import uuid
 from collections import defaultdict, deque
+from datetime import date
 
 from flask import Response, current_app, request, stream_with_context
 from flask_jwt_extended import get_jwt_identity, jwt_required
@@ -21,6 +22,7 @@ from app.ai.service import (
     build_analysis_facts,
     build_authenticated_messages,
     build_guest_messages,
+    build_trend_analysis_messages,
     emergency_reply,
     find_faq_answer,
     format_analysis_context,
@@ -38,7 +40,7 @@ from app.ai.rag import (
     get_knowledge_retriever,
 )
 from app.extensions import db
-from app.models import FriendRelation, HealthDomain, HealthIndicator, HealthRecord, IndicatorDict, ReportAsset, User
+from app.models import FriendRelation, HealthDomain, HealthIndicator, HealthRecord, IndicatorDict, IndicatorDomainLink, ReportAsset, User
 
 
 _rate_buckets = defaultdict(deque)
@@ -1234,8 +1236,101 @@ def analyze_stream():
     return _sse_response(generate())
 
 
+@ai_bp.post("/trends/stream")
+@jwt_required()
+def analyze_trends_stream():
+    user = _current_user_optional()
+    if user is None or user.role != "user":
+        return _json_error("只有普通用户可以分析健康趋势", "regular_user_required", 403)
+    if _is_rate_limited(user):
+        return _json_error("AI 请求过于频繁，请稍后再试", "rate_limited", 429, retryable=True)
+    payload, payload_error = _parse_json_object()
+    if payload_error:
+        return payload_error
+    if payload.get("consent") is not True:
+        return _json_error("分析前需要确认本次页面的数据授权", "trend_consent_required", 400)
+    try:
+        domain_id = int(payload.get("domain_id"))
+    except (TypeError, ValueError):
+        return _json_error("请选择需要分析的健康方向", "invalid_domain_id", 400)
+    domain = db.session.get(HealthDomain, domain_id)
+    if domain is None or not domain.is_active:
+        return _json_error("健康方向不存在或已停用", "domain_not_found", 404)
+    owner = user
+    raw_owner_id = payload.get("owner_id")
+    if raw_owner_id not in {None, "", "self"}:
+        try: owner_id = int(raw_owner_id)
+        except (TypeError, ValueError): return _json_error("成员信息不正确", "invalid_owner_id", 400)
+        relation = FriendRelation.query.filter_by(user_id=user.id, friend_user_id=owner_id, auth_status=True).first()
+        if relation is None:
+            return _json_error("当前没有查看该成员健康数据的授权", "owner_access_denied", 403)
+        owner = db.session.get(User, owner_id)
+        if owner is None or not owner.is_active:
+            return _json_error("成员账号不可用", "owner_not_found", 404)
+
+    def parse_day(key):
+        raw = payload.get(key)
+        if not raw: return None
+        try: return date.fromisoformat(str(raw))
+        except ValueError: return False
+    start_date, end_date = parse_day("start_date"), parse_day("end_date")
+    if start_date is False or end_date is False or (start_date and end_date and start_date > end_date):
+        return _json_error("日期范围不正确", "invalid_date_range", 400)
+
+    from app.health.routes import effective_points
+    links = IndicatorDomainLink.query.filter_by(health_domain_id=domain.id).order_by(
+        IndicatorDomainLink.sort_order, IndicatorDomainLink.indicator_dict_id).all()
+    indicators = []
+    for link in links:
+        definition = link.indicator
+        points = effective_points(owner.id, definition.id, start_date, end_date)[-120:]
+        if not points:
+            continue
+        indicators.append({
+            "name": definition.name,
+            "unit": definition.unit,
+            "reference_low": float(definition.reference_low) if definition.reference_low is not None else None,
+            "reference_high": float(definition.reference_high) if definition.reference_high is not None else None,
+            "reference_context": definition.clinical_significance,
+            "points": points,
+        })
+    if not indicators:
+        return _json_error("当前筛选范围没有可分析的趋势数据", "trend_data_unavailable", 400)
+    facts = {
+        "owner_display": owner.real_name or owner.username,
+        "health_domain": domain.name,
+        "start_date": start_date.isoformat() if start_date else None,
+        "end_date": end_date.isoformat() if end_date else None,
+        "indicators": indicators,
+    }
+    request_id = uuid.uuid4().hex
+    support_phone = (current_app.config.get("AI_SUPPORT_PHONE") or "").strip()
+
+    def generate():
+        yield _sse("meta", {"request_id": request_id, "mode": "trend_analysis",
+                            "model": current_app.config.get("DEEPSEEK_MODEL")})
+        yield _sse("status", {"stage": "analyzing", "message": "正在结合当前图表整理趋势…"})
+        try:
+            client = get_ai_client(current_app.config)
+            completion = yield from _consume_provider_stream(
+                client, build_trend_analysis_messages(facts), json_output=True,
+                max_tokens=1800, heartbeat_message="AI 正在分析当前图表…")
+            result = parse_safety_completion(completion, support_phone)
+            for chunk in iter_text_chunks(result["reply"]):
+                yield _sse("delta", {"text": chunk})
+            done = {"request_id": request_id, "decision": result["decision"], "source": "model"}
+            if result["decision"] == "support": done["support_phone"] = support_phone or None
+            yield _sse("done", done)
+        except (AiConfigurationError, AiProviderError) as exc:
+            yield _sse("error", _stream_error_payload(exc, request_id))
+        except Exception as exc:  # pragma: no cover
+            current_app.logger.exception("AI trend analysis failed request_id=%s", request_id)
+            yield _sse("error", _stream_error_payload(exc, request_id))
+    return _sse_response(generate())
+
+
 @ai_bp.get("/capabilities")
 def capabilities():
     return {"image_analysis": bool(current_app.config.get("AI_SUPPORTS_IMAGES", False)),
-            "domain_analysis": True, "analysis_persisted": False,
+            "domain_analysis": True, "trend_analysis": True, "analysis_persisted": False,
             "medical_diagnosis": False}, 200

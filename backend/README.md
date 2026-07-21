@@ -75,6 +75,7 @@ if (-not (Test-Path .env)) {
 | `/api/health-data` | 普通用户 | 仅机构已归档体检报告列表、详情和私有附件；个人测量不进入此列表 |
 | `/api/health/timeline` | 普通用户 | `all/exam/self` 三种记录类型的统一时间线 |
 | `/api/health-trends/{domain_id}` | 普通用户 | 按健康领域和来源分轨的长期趋势 |
+| `/api/ai/trends/stream` | 普通用户 | 本次页面授权后的当前趋势流式 AI 解读 |
 | `/api/organizations` | 登录用户 | 机构主体及其分院的公开分组读模型 |
 | `/api/org/context` | 机构账号 | 当前机构主体、当前分院、兄弟分院和协作权限 |
 | `/api/friends` | 普通用户 | 亲友关系与授权状态 |
@@ -119,7 +120,7 @@ draft ──lock──> locked ──submit + exact user identity──> publish
 
 预约直接绑定注册普通用户，不再提供健康码候选匹配。提交时再次校验账号仍然启用，成功后在同一事务写入报告发布字段，并把预约由 `awaiting_report` 改为 `fulfilled`。
 
-预约状态为 `unfulfilled → awaiting_report → fulfilled`；`unfulfilled` 可由用户取消为 `cancelled`，或由机构随时置为不可恢复的 `invalidated`。预约创建后即按预约日期进入本人及获授权亲友健康时间线，并使用同一预约 ID 随状态变化更新展示。每日上限为空表示不限量，正整数表示限制；降低上限不取消既有预约。
+预约状态为 `unfulfilled → awaiting_report → fulfilled`；`unfulfilled` 可由用户取消为 `cancelled`，或由机构随时置为不可恢复的 `invalidated`。同一受检者同日已有有效预约时统一返回 `APPOINTMENT_DATE_CONFLICT`，前端显示明确业务窗口。预约成功后，机构收到接待提醒，预约人和每位受检者收到包含掩码身份信息、分院地址和套餐须知的幂等确认邮件。预约创建后即按预约日期进入本人及获授权亲友健康时间线，并使用同一预约 ID 随状态变化更新展示。每日上限为空表示不限量，正整数表示限制；降低上限不取消既有预约。
 
 ## 时间线、趋势与亲友隐私
 
@@ -192,7 +193,7 @@ Waitress 本机演示推荐从项目根目录运行：
 .\.venv\Scripts\python.exe -m pip check
 ```
 
-当前 53 项测试使用独立内存 SQLite，不修改 `instance/health_system.db`；覆盖 schema v8、SQLite/openGauss 结构校验、v7→v8 全量保留升级、机构主体与分院权限、跨院审计、演示数据安全重建、健康领域、套餐版本、多人预约组、候补提醒、Outbox 防重复与连续中文邮件、报告指标/文字/附件、亲友边界、趋势与时间线、AI 同意、RAG 降级和全量快照迁移。完整结论见 [`../项目文档/测试报告.md`](../项目文档/测试报告.md)。
+当前 56 项测试使用独立内存 SQLite，不修改 `instance/health_system.db`；覆盖 schema v8、SQLite/openGauss 结构校验、v7→v8 全量保留升级、机构主体与分院权限、跨院审计、演示数据安全重建、健康领域、套餐版本、多人预约组、同日预约冲突、候补提醒、用户与机构预约邮件、Outbox 防重复与连续中文邮件、报告指标/文字/附件、亲友边界、趋势参考范围、趋势 AI 授权、时间线、RAG 降级和全量快照迁移。完整结论见 [`../项目文档/测试报告.md`](../项目文档/测试报告.md)。
 
 ## 生产数据库同步
 

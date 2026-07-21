@@ -33,6 +33,7 @@
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
 
+    <div class="trend-analysis-layout">
     <section v-loading="loading" class="trend-story-grid" aria-live="polite">
       <article v-for="entry in series" :key="entry.indicator.id" class="trend-story-card">
         <header>
@@ -54,23 +55,34 @@
           </div>
 
           <div class="trend-chart-platform">
-            <svg viewBox="0 0 360 150" preserveAspectRatio="none" role="img" :aria-label="`${entry.indicator.name}，${sourceName(track.source)}，共 ${track.summary.count} 次记录`">
-              <line x1="12" y1="126" x2="348" y2="126" class="trend-chart-platform__axis" />
-              <line x1="12" y1="76" x2="348" y2="76" class="trend-chart-platform__guide" />
-              <polyline :points="sparkline(track.points)" class="trend-chart-platform__line" />
-              <circle v-for="(point, index) in chartPoints(track.points)" :key="`${point.date}-${index}`" :cx="point.x" :cy="point.y" r="4" class="trend-chart-platform__point">
-                <title>{{ point.date }}：{{ point.value }} {{ entry.indicator.unit }}</title>
-              </circle>
-            </svg>
-            <div class="trend-chart-platform__range">
-              <span>{{ formatShortDate(track.points[0]?.date) }}</span>
-              <span>{{ track.summary.count }} 次记录</span>
-              <span>{{ formatShortDate(track.points.at(-1)?.date) }}</span>
+            <HealthTrendChart :points="track.points" :reference="track.reference" :unit="entry.indicator.unit || ''" :indicator-name="entry.indicator.name" :source-name="sourceName(track.source)" />
+            <div class="trend-reference-note">
+              <strong>{{ track.reference?.label || "暂无统一参考范围" }}</strong>
+              <span v-if="track.reference?.low != null && track.reference?.high != null">{{ track.reference.low }}–{{ track.reference.high }} {{ entry.indicator.unit }}</span>
+              <p>{{ track.reference?.context }}</p>
+              <a v-if="track.reference?.source_url" :href="track.reference.source_url" target="_blank" rel="noopener noreferrer">{{ track.reference.source_title || "查看参考来源" }}</a>
             </div>
           </div>
         </section>
       </article>
     </section>
+    <aside class="trend-ai-panel" aria-live="polite">
+      <span class="user-kicker">AI 图表解读</span>
+      <h3>结合当前筛选解释趋势</h3>
+      <template v-if="!trendConsent">
+        <p>确认后，本页面会把当前成员、健康方向和日期范围内的趋势数据发送至 DeepSeek。授权仅在本次页面停留期间有效。</p>
+        <el-checkbox v-model="consentChecked">我已了解并同意本次页面分析</el-checkbox>
+        <el-button type="primary" :disabled="!consentChecked || !series.length" @click="grantTrendConsent">授权并开始分析</el-button>
+      </template>
+      <template v-else>
+        <div v-if="aiLoading" class="trend-ai-status"><span></span>{{ aiStatus || "正在分析当前图表…" }}</div>
+        <div v-else-if="aiError" class="trend-ai-error"><p>{{ aiError }}</p><el-button plain @click="runTrendAnalysis(true)">重新分析</el-button></div>
+        <p v-else-if="aiAnswer" class="trend-ai-answer">{{ aiAnswer }}</p>
+        <p v-else>调整筛选后，这里会自动生成对应的趋势说明。</p>
+        <small>AI 内容仅用于健康科普，不能替代医生诊断或治疗建议。</small>
+      </template>
+    </aside>
+    </div>
 
     <el-card v-if="assetEvents.length" shadow="never" class="user-panel trend-asset-panel">
       <template #header><div class="user-section-heading"><div><span>检查附件</span><h3>这段时间的影像与文件</h3></div></div></template>
@@ -92,11 +104,13 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from "vue";
+import { onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
 import { fetchFriends } from "../api/friends";
+import { streamAiTrendAnalysis } from "../api/ai";
 import { fetchHealthAssetContent, fetchHealthDomains, fetchHealthTrends } from "../api/health";
+import HealthTrendChart from "../components/HealthTrendChart.vue";
 import { useAuthStore } from "../stores/auth";
 import { buildHealthOwnerOptions } from "../utils/healthOwners";
 
@@ -110,6 +124,15 @@ const assetEvents = ref([]);
 const loading = ref(false);
 const error = ref("");
 const dateRange = ref([]);
+const consentChecked = ref(false);
+const trendConsent = ref(false);
+const aiLoading = ref(false);
+const aiAnswer = ref("");
+const aiError = ref("");
+const aiStatus = ref("");
+const analysisCache = new Map();
+let analysisController;
+let analysisTimer;
 const filters = reactive({
   owner_id: route.query.owner_id ? Number(route.query.owner_id) : null,
   domain_id: route.query.domain_id ? Number(route.query.domain_id) : null,
@@ -138,26 +161,12 @@ function changeClass(value) {
   return Number(value) > 0 ? "is-up" : "is-down";
 }
 
-function chartPoints(points) {
-  if (!points?.length) return [];
-  const values = points.map((point) => Number(point.value));
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  return points.map((point, index) => ({
-    ...point,
-    x: points.length === 1 ? 180 : 16 + (index / (points.length - 1)) * 328,
-    y: 122 - ((Number(point.value) - min) / range) * 96,
-  }));
-}
-
-function sparkline(points) {
-  return chartPoints(points).map((point) => `${point.x},${point.y}`).join(" ");
-}
-
 function formatShortDate(value) {
   if (!value) return "—";
-  return new Date(`${value}T00:00:00`).toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
+  const matched = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!matched) return "日期待核对";
+  const date = new Date(Number(matched[1]), Number(matched[2]) - 1, Number(matched[3]));
+  return Number.isNaN(date.getTime()) ? "日期待核对" : date.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
 }
 
 function cleanParams(value) {
@@ -181,11 +190,48 @@ async function load() {
     const { data } = await fetchHealthTrends(filters.domain_id, params);
     series.value = data.series_by_indicator || [];
     assetEvents.value = data.asset_events || [];
+    if (trendConsent.value) scheduleTrendAnalysis();
   } catch (fetchError) {
     error.value = fetchError?.response?.data?.message || "健康趋势暂时没有加载成功，请稍后重试";
   } finally {
     loading.value = false;
   }
+}
+
+function analysisPayload() {
+  return cleanParams({ owner_id: filters.owner_id, domain_id: filters.domain_id,
+    start_date: dateRange.value?.[0], end_date: dateRange.value?.[1], consent: true });
+}
+
+function scheduleTrendAnalysis() {
+  clearTimeout(analysisTimer);
+  analysisTimer = setTimeout(() => runTrendAnalysis(), 450);
+}
+
+async function grantTrendConsent() {
+  trendConsent.value = true;
+  await runTrendAnalysis();
+}
+
+async function runTrendAnalysis(force = false) {
+  if (!trendConsent.value || !series.value.length) return;
+  const payload = analysisPayload();
+  const key = JSON.stringify(payload);
+  if (!force && analysisCache.has(key)) {
+    aiAnswer.value = analysisCache.get(key); aiError.value = ""; return;
+  }
+  analysisController?.abort();
+  analysisController = new AbortController();
+  aiLoading.value = true; aiAnswer.value = ""; aiError.value = ""; aiStatus.value = "";
+  try {
+    await streamAiTrendAnalysis(payload, { signal: analysisController.signal, onEvent(event) {
+      if (event.event === "status") aiStatus.value = event.message || "正在分析当前图表…";
+      if (event.event === "delta") aiAnswer.value += event.text || "";
+    } });
+    if (aiAnswer.value) analysisCache.set(key, aiAnswer.value);
+  } catch (analysisError) {
+    if (analysisError?.name !== "AbortError") aiError.value = analysisError?.message || "AI 暂时无法分析当前图表";
+  } finally { aiLoading.value = false; }
 }
 
 async function apply() {
@@ -220,4 +266,5 @@ onMounted(async () => {
   }));
   await load();
 });
+onBeforeUnmount(() => { clearTimeout(analysisTimer); analysisController?.abort(); });
 </script>

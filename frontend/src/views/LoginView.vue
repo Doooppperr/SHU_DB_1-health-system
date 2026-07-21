@@ -23,7 +23,7 @@
           </el-form-item>
           <el-form-item label="图片验证码">
             <div class="captcha-row">
-              <el-input v-model="form.captcha_answer" size="large" maxlength="4" placeholder="输入验证码" autocomplete="off" @keyup.enter="onSubmit" />
+              <el-input v-model="form.captcha_answer" size="large" maxlength="4" placeholder="输入验证码" autocomplete="off" />
               <button
                 class="captcha-image-button"
                 type="button"
@@ -39,7 +39,7 @@
             </div>
           </el-form-item>
           <el-alert v-if="errorMessage" :title="errorMessage" type="error" :closable="false" show-icon class="auth-alert" />
-          <el-button native-type="submit" type="primary" size="large" :loading="loading" class="auth-submit">登录并进入工作台</el-button>
+          <el-button native-type="submit" type="primary" size="large" :loading="loading" :disabled="loading" class="auth-submit">登录并进入工作台</el-button>
         </el-form>
         <p class="auth-switch">还没有账号？<router-link to="/register">立即注册</router-link></p>
         <router-link class="auth-back" to="/">← 返回公开门户</router-link>
@@ -87,6 +87,7 @@ const refreshCaptcha = () => {
 };
 
 async function onSubmit() {
+  if (loading.value) return;
   if (!form.username.trim() || !form.password || !form.captcha_answer.trim()) {
     errorMessage.value = "请输入用户名、密码和验证码";
     return;
@@ -110,7 +111,11 @@ async function onSubmit() {
       : null;
     await router.replace(safeRedirect || dashboardRouteForRole(user.role));
   } catch (error) {
-    errorMessage.value = error?.response?.data?.message || "登录失败，请检查账号信息";
+    const code = error?.response?.data?.code;
+    const rawMessage = error?.response?.data?.message;
+    errorMessage.value = code === "INVALID_CAPTCHA" || rawMessage === "invalid captcha"
+      ? "验证码不正确，请重新输入"
+      : rawMessage || "登录失败，请检查账号信息";
     await loadCaptcha({ showError: false });
   } finally {
     loading.value = false;

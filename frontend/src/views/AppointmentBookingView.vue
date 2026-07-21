@@ -264,7 +264,18 @@ async function book() {
     form.notice_confirmed = false;
     await Promise.all([loadAvailability(), reload()]);
   } catch (error) {
-    ElMessage.error(error?.response?.data?.message || "预约没有提交成功，请稍后重试");
+    const data = error?.response?.data || {};
+    if (data.code === "APPOINTMENT_DATE_CONFLICT") {
+      const names = (data.conflicts || []).map((item) => item.display_name).filter(Boolean);
+      const detail = names.length ? `受检者：${names.join("、")}。` : "";
+      await ElMessageBox.alert(
+        `${detail}${data.message || "当天已有预约，请先查看原预约后再选择其他日期"}`,
+        "当天已有预约",
+        { type: "warning", confirmButtonText: "我知道了" },
+      );
+    } else {
+      ElMessage.error(data.message || "预约没有提交成功，请稍后重试");
+    }
     await loadAvailability();
   } finally {
     submitting.value = false;

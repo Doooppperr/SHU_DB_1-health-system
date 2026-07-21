@@ -83,6 +83,29 @@ def _participants(booker, raw_ids):
     return [(users[user_id], authorized_at[user_id]) for user_id in ids], None
 
 
+def _appointment_conflict_payload(participants, day):
+    """Return a stable, user-facing conflict without exposing internal rows."""
+    conflicts = []
+    for user, _authorized_at in participants:
+        if Appointment.query.filter_by(user_id=user.id, active_date_key=day).first():
+            conflicts.append({"user_id": user.id, "display_name": user.real_name or user.username})
+    if not conflicts:
+        return None
+    return {
+        "code": "APPOINTMENT_DATE_CONFLICT",
+        "message": "当天已有预约，请先查看或取消原预约后再选择其他日期",
+        "appointment_date": day.isoformat(),
+        "conflicts": conflicts,
+    }
+
+
+def _masked_health_id(value):
+    text = str(value or "").strip()
+    if len(text) <= 4:
+        return "****" if text else "未设置"
+    return f"{text[:2]}{'*' * max(4, len(text) - 4)}{text[-2:]}"
+
+
 def _package(institution_id, package_id):
     package = Package.query.filter_by(id=package_id, institution_id=institution_id, is_active=True).first()
     if not package: return None, None, ({"message": "active approved package not found"}, 404)
@@ -197,6 +220,9 @@ def create_group():
     domain_snapshot = result
     participants, error = _participants(g.current_user, payload.get("participant_user_ids"))
     if error: return error
+    conflict = _appointment_conflict_payload(participants, day)
+    if conflict:
+        return conflict, 409
     confirmed = payload.get("notice_confirmed") is True
     if version.booking_notice_snapshot and not confirmed:
         return {"message": "package booking notice must be confirmed"}, 400
@@ -241,6 +267,43 @@ def create_group():
                 idempotency_key=f"institution:{institution.id}:date:{day.isoformat()}:full:{slot.revision}",
                 recipient=recipient, payload={"institution": institution.name,
                     "appointment_date": day.isoformat(), "message": "该日期预约名额已满", "login_url": "/login"}))
+    # User confirmations are independent of the institution's notification switch.
+    # One logical account receives one message; accounts sharing an address still
+    # receive their own traceable confirmation.
+    participant_by_id = {user.id: user for user, _authorized_at in participants}
+    notification_users = dict(participant_by_id)
+    notification_users[g.current_user.id] = g.current_user
+    participant_summary = [
+        {"name": user.real_name or user.username, "health_id_masked": _masked_health_id(user.health_id)}
+        for user, _authorized_at in participants
+    ]
+    for notification_user in notification_users.values():
+        if not notification_user.email:
+            continue
+        is_organizer = notification_user.id == g.current_user.id
+        own = participant_by_id.get(notification_user.id)
+        db.session.add(NotificationOutbox(
+            event_type="booking_user_confirmed",
+            idempotency_key=f"booking-group:{group.id}:user:{notification_user.id}:confirmed",
+            recipient=notification_user.email,
+            payload={
+                "group_code": group.group_code,
+                "institution": institution.name,
+                "branch": institution.branch_name,
+                "address": institution.address,
+                "appointment_date": day.isoformat(),
+                "package": version.name_snapshot,
+                "booking_notice": version.booking_notice_snapshot,
+                "recipient_name": notification_user.real_name or notification_user.username,
+                "is_organizer": is_organizer,
+                "participant": ({
+                    "name": own.real_name or own.username,
+                    "health_id_masked": _masked_health_id(own.health_id),
+                } if own else None),
+                "participants": participant_summary if is_organizer else [],
+                "login_url": "/login",
+            },
+        ))
     participant_ids = {user.id for user, _ in participants}
     for sub in WaitlistSubscription.query.filter_by(subscriber_user_id=g.current_user.id,
             institution_id=institution.id, package_id=package.id, appointment_date=day,
@@ -249,7 +312,14 @@ def create_group():
             sub.status = "closed"; sub.closed_at = now
     try: db.session.commit()
     except IntegrityError:
-        db.session.rollback(); return {"message": "预约组创建冲突；组内任一受检者已有当日有效预约"}, 409
+        db.session.rollback()
+        conflict = _appointment_conflict_payload(participants, day)
+        return conflict or {
+            "code": "APPOINTMENT_DATE_CONFLICT",
+            "message": "当天已有预约，请先查看或取消原预约后再选择其他日期",
+            "appointment_date": day.isoformat(),
+            "conflicts": [],
+        }, 409
     return {"item": _group_payload(group)}, 201
 
 

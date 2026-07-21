@@ -76,7 +76,7 @@
           </template>
 
           <template v-else>
-            <p class="health-journey-card__summary">当天共记录 {{ record.indicatorCount }} 项指标，已自动整理进健康数据。</p>
+            <p class="health-journey-card__summary">当天共记录 {{ record.indicatorCount }} 项指标，已自动整理到健康趋势。</p>
             <div class="journey-domain-list">
               <span v-for="domain in record.domains" :key="domain.id">{{ domain.name }}</span>
               <span v-if="!record.domains.length">日常健康</span>
@@ -167,12 +167,13 @@ function openDetail(record) {
   });
 }
 
-function recordTypeChanged() {
+async function recordTypeChanged() {
   filters.page = 1;
   if (filters.record_type === "self") {
     filters.institution_id = null;
     filters.status = null;
   }
+  await apply();
 }
 
 function cleanParams(value) {

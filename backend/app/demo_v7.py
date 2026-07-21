@@ -32,6 +32,7 @@ from app.models import (
     InstitutionImage,
     InstitutionInvite,
     InstitutionReport,
+    IndicatorDict,
     NotificationDelivery,
     NotificationOutbox,
     Organization,
@@ -52,7 +53,7 @@ from app.models import (
 
 
 DEMO_PASSWORD = "Shuhealthdoc！"
-DEMO_DATASET_VERSION = 4
+DEMO_DATASET_VERSION = 5
 DEMO_USERNAMES = tuple(f"test{index}" for index in range(1, 6))
 DEMO_STAFF_USERNAMES = (
     *(f"institution{institution}_staff{staff}" for institution in range(1, 4) for staff in range(1, 3)),
@@ -233,6 +234,7 @@ def _demo_branch(name, branch_name, district, address, phone, packages):
 INSTITUTION_SCENARIOS += (
     _demo_branch("澄心健康管理中心", "浦东陆家嘴院区", "浦东新区", "浦东南路855号健康中心4层", "021-58881201", (
         _demo_package("陆家嘴职场轻体检", "基础体征与代谢风险筛查", "599.00", ("basic", "metabolic"), "工作节奏快、希望半日完成基础筛查的职场人"),
+        _demo_package("陆家嘴商务人士心血管筛查", "心脑血管与循环风险评估", "899.00", ("cardio",), "长期出差、应酬或关注循环风险的商务人士"),
     )),
     _demo_branch("澄心健康管理中心", "闵行虹桥院区", "闵行区", "申长路988号虹桥健康楼2层", "021-54881102", (
         _demo_package("家庭同行综合评估", "家庭成员年度综合健康评估", "1099.00", ("basic", "cardio", "metabolic", "renal"), "希望与家人同行完成年度体检的人群"),
@@ -257,19 +259,18 @@ INSTITUTION_SCENARIOS += (
     _demo_branch("安沐女性与家庭健康中心", "浦东张江院区", "浦东新区", "祖冲之路887号健康服务中心", "021-50801108", (
         _demo_package("张江女性轻体检", "女性基础与消化健康筛查", "699.00", ("basic", "digestive", "other"), "希望半日完成基础检查的女性职场人"),
     )),
-    _demo_branch("安沐女性与家庭健康中心", "嘉定新城院区", "嘉定区", "白银路399号家庭健康中心", "021-59521109", (
-        _demo_package("家庭女性综合评估", "女性与家庭多领域健康评估", "1199.00", ("basic", "metabolic", "renal", "other"), "需要家庭同行或长期健康档案的女性"),
+    _demo_branch("澄心健康管理中心", "黄浦人民广场院区", "黄浦区", "南京西路288号健康管理楼6层", "021-63221109", (
+        _demo_package("人民广场都市综合体检", "中心城区职场人年度综合筛查", "799.00", ("basic", "cardio", "metabolic", "digestive"), "在中心城区工作、希望便捷完成年度体检的人群"),
     )),
     _demo_branch("仁序职业健康与综合体检中心", "松江院区", "松江区", "新松江路925号仁序健康楼", "021-57701110", (
         _demo_package("职场年度标准体检", "职场人年度多领域筛查", "699.00", ("basic", "cardio", "metabolic", "digestive"), "18—60岁常规职场体检人群"),
         _demo_package("高强度工作人群评估", "循环、代谢与消化联合评估", "999.00", ("cardio", "metabolic", "digestive"), "长期加班、饮食作息不规律的人群"),
-        _demo_package("企业骨干综合体检", "多领域综合健康风险评估", "1399.00", ("basic", "cardio", "metabolic", "respiratory", "renal"), "需要系统年度体检的企业骨干与管理人员"),
     )),
-    _demo_branch("仁序职业健康与综合体检中心", "青浦徐泾院区", "青浦区", "诸光路1588号体检中心2层", "021-59761111", (
-        _demo_package("会展职场健康筛查", "基础、循环与呼吸健康筛查", "799.00", ("basic", "cardio", "respiratory"), "会展、差旅和高频沟通岗位从业者"),
+    _demo_branch("澄心健康管理中心", "宝山顾村院区", "宝山区", "陆翔路111号澄心健康楼3层", "021-66761111", (
+        _demo_package("北上海家庭健康评估", "家庭成员基础、循环与呼吸健康筛查", "899.00", ("basic", "cardio", "respiratory"), "居住在北上海、希望家庭同行体检的人群"),
     )),
-    _demo_branch("仁序职业健康与综合体检中心", "奉贤南桥院区", "奉贤区", "南奉公路8500号健康管理楼", "021-67181112", (
-        _demo_package("产业员工综合体检", "职业人群基础与多系统评估", "899.00", ("basic", "cardio", "respiratory", "digestive"), "园区企业员工及长期站立作业人群"),
+    _demo_branch("衡康代谢与慢病管理中心", "浦东金桥院区", "浦东新区", "金科路2889号慢病管理中心4层", "021-58981112", (
+        _demo_package("金桥慢病风险评估", "职业人群代谢与慢病风险评估", "899.00", ("basic", "cardio", "metabolic", "renal"), "园区职工及需要持续观察代谢指标的人群"),
     )),
 )
 
@@ -963,51 +964,66 @@ def _expand_v8_demo_data(users, institutions, packages, indicators, domains, tod
         for index in range(1, len(institutions) + 1)
     }
     package_by_branch = {index: sorted(branch.packages, key=lambda item: item.id)[0] for index, branch in enumerate(institutions, start=1)}
+    if testing:
+        report_distribution = {"澄心健康管理中心": 5, "衡康代谢与慢病管理中心": 3,
+                               "云川影像与呼吸体检中心": 3, "安沐女性与家庭健康中心": 2,
+                               "仁序职业健康与综合体检中心": 2}
+        group_distribution = {
+            organization.name: BookingGroup.query.join(Institution).filter(
+                Institution.organization_id == organization.id).count()
+            for organization in Organization.query.all()
+        }
+    else:
+        report_distribution = {"澄心健康管理中心": 18, "衡康代谢与慢病管理中心": 12,
+                               "云川影像与呼吸体检中心": 9, "安沐女性与家庭健康中心": 7,
+                               "仁序职业健康与综合体检中心": 4}
+        group_distribution = {"澄心健康管理中心": 14, "衡康代谢与慢病管理中心": 10,
+                              "云川影像与呼吸体检中心": 8, "安沐女性与家庭健康中心": 5,
+                              "仁序职业健康与综合体检中心": 3}
+
     sequence = 0
-    while InstitutionReport.query.count() < report_target:
-        branch_index = sequence % len(institutions) + 1
-        user = users[DEMO_USERNAMES[sequence % len(DEMO_USERNAMES)]]
-        package = package_by_branch[branch_index]
-        version = _package_version(package)
-        domain = sorted(version.domains, key=lambda item: item.sort_order)[0].domain
-        indicator_code, value = domain_indicator[domain.code]
-        report = _create_imported_historical_report(
-            user=user,
-            institution=institutions[branch_index - 1],
-            package=package,
-            staff=staff_by_branch[branch_index],
-            exam_date=today - timedelta(days=760 + sequence * 9),
-            indicators=indicators,
-            domains=domains,
-            values=((indicator_code, value, domain.code, sequence % 9 == 0),),
-            title=f"{institutions[branch_index - 1].branch_name}历史体检摘要",
-            body="该合成记录用于演示同机构不同分院之间的已归档报告衔接，源分院继续保留内容责任。",
-        )
-        if ReportAsset.query.count() < asset_target:
-            _add_synthetic_report_asset(report, staff_by_branch[branch_index], domain, sequence)
-        sequence += 1
+    organizations = Organization.query.order_by(Organization.id).all()
+    for organization in organizations:
+        target = report_distribution[organization.name]
+        branches = sorted(organization.branches, key=lambda item: item.id)
+        while InstitutionReport.query.join(Institution).filter(Institution.organization_id == organization.id).count() < target:
+            branch = branches[sequence % len(branches)]
+            branch_index = institutions.index(branch) + 1
+            user = users[DEMO_USERNAMES[sequence % len(DEMO_USERNAMES)]]
+            package = package_by_branch[branch_index]
+            version = _package_version(package)
+            domain = sorted(version.domains, key=lambda item: item.sort_order)[0].domain
+            indicator_code, value = domain_indicator[domain.code]
+            report = _create_imported_historical_report(
+                user=user, institution=branch, package=package, staff=staff_by_branch[branch_index],
+                exam_date=today - timedelta(days=760 + sequence * 9), indicators=indicators, domains=domains,
+                values=((indicator_code, value, domain.code, sequence % 9 == 0),),
+                title=f"{branch.branch_name}历史体检摘要",
+                body="该合成记录用于演示同机构不同分院之间的已归档报告衔接，源分院继续保留内容责任。",
+            )
+            if ReportAsset.query.count() < asset_target:
+                _add_synthetic_report_asset(report, staff_by_branch[branch_index], domain, sequence)
+            sequence += 1
 
     group_sequence = 0
-    while BookingGroup.query.count() < group_target:
-        groups_left = group_target - BookingGroup.query.count()
-        appointments_left = appointment_target - Appointment.query.count()
-        party_size = 2 if appointments_left > groups_left else 1
-        branch_index = group_sequence % len(institutions) + 1
-        participant_start = group_sequence % len(DEMO_USERNAMES)
-        participants = [
-            users[DEMO_USERNAMES[(participant_start + offset) % len(DEMO_USERNAMES)]]
-            for offset in range(party_size)
-        ]
-        _create_booking_group(
-            booker=participants[0],
-            participants=participants,
-            institution=institutions[branch_index - 1],
-            package=package_by_branch[branch_index],
-            appointment_date=today - timedelta(days=260 + group_sequence),
-            status="cancelled" if group_sequence % 2 == 0 else "invalidated",
-            created_at=now - timedelta(days=300 + group_sequence),
-        )
-        group_sequence += 1
+    for organization in organizations:
+        target = group_distribution[organization.name]
+        branches = sorted(organization.branches, key=lambda item: item.id)
+        while BookingGroup.query.join(Institution).filter(Institution.organization_id == organization.id).count() < target:
+            groups_left = max(group_target - BookingGroup.query.count(), 1)
+            appointments_left = appointment_target - Appointment.query.count()
+            party_size = 2 if appointments_left > groups_left else 1
+            branch = branches[group_sequence % len(branches)]
+            branch_index = institutions.index(branch) + 1
+            participant_start = group_sequence % len(DEMO_USERNAMES)
+            participants = [users[DEMO_USERNAMES[(participant_start + offset) % len(DEMO_USERNAMES)]] for offset in range(party_size)]
+            _create_booking_group(
+                booker=participants[0], participants=participants, institution=branch,
+                package=package_by_branch[branch_index], appointment_date=today - timedelta(days=260 + group_sequence),
+                status="cancelled" if group_sequence % 2 == 0 else "invalidated",
+                created_at=now - timedelta(days=300 + group_sequence),
+            )
+            group_sequence += 1
 
     measurement_sequence = 0
     measurement_indicators = ("WEIGHT", "HR", "FBG", "SPO2", "TEMP")
@@ -1023,20 +1039,27 @@ def _expand_v8_demo_data(users, institutions, packages, indicators, domains, tod
 
     # Seed a few realistic audit rows without exposing report contents to the
     # platform administrator. Every row represents an actual sibling branch.
+    audit_targets = {"澄心健康管理中心": 4, "衡康代谢与慢病管理中心": 3,
+                     "云川影像与呼吸体检中心": 3, "安沐女性与家庭健康中心": 2}
     for organization in Organization.query.order_by(Organization.id).all():
         branches = [branch for branch in organization.branches if branch.is_active]
         if len(branches) < 2:
             continue
-        report = InstitutionReport.query.filter_by(institution_id=branches[0].id, status="published").first()
-        actor = User.query.filter_by(managed_institution_id=branches[1].id, role="institution_admin").first()
-        if report and actor:
+        reports = InstitutionReport.query.filter(InstitutionReport.institution_id.in_([branch.id for branch in branches]), InstitutionReport.status == "published").order_by(InstitutionReport.id).all()
+        for index in range(audit_targets.get(organization.name, 1)):
+            source = branches[index % len(branches)]
+            actor_branch = branches[(index + 1) % len(branches)]
+            report = next((item for item in reports if item.institution_id == source.id), reports[index % len(reports)] if reports else None)
+            actor = User.query.filter_by(managed_institution_id=actor_branch.id, role="institution_admin").first()
+            if not report or not actor:
+                continue
             db.session.add(ReportAccessLog(
                 actor_user_id=actor.id,
-                actor_institution_id=branches[1].id,
+                actor_institution_id=actor_branch.id,
                 report_id=report.id,
-                source_institution_id=branches[0].id,
+                source_institution_id=report.institution_id,
                 access_type="detail",
-                accessed_at=now - timedelta(days=organization.id),
+                accessed_at=now - timedelta(days=organization.id + index),
             ))
 
 
@@ -1508,6 +1531,10 @@ def rebuild_v7_demo_data(*, commit: bool = True) -> dict:
         _clear_demo_business_data()
         institutions = _ensure_demo_branches()
         ensure_v7_demo_accounts(commit=False)
+        temperature = IndicatorDict.query.filter_by(code="TEMP").first()
+        if temperature:
+            temperature.reference_low = Decimal("36.10")
+            temperature.reference_high = Decimal("37.20")
         _create_catalog(institutions)
         db.session.flush()
         seeded = seed_v7_demo_experience(commit=False)
@@ -1528,7 +1555,7 @@ def rebuild_v7_demo_data(*, commit: bool = True) -> dict:
 
 
 def demo_snapshot_summary() -> dict:
-    return {
+    summary = {
         "target_dataset_version": DEMO_DATASET_VERSION,
         "users": User.query.count(),
         "organizations": Organization.query.count(),
@@ -1544,3 +1571,20 @@ def demo_snapshot_summary() -> dict:
         "report_assets": ReportAsset.query.count(),
         "comments": Comment.query.count(),
     }
+    summary["branch_distribution"] = {
+        row.name: len(row.branches) for row in Organization.query.order_by(Organization.id).all()
+    }
+    summary["package_distribution"] = {
+        row.name: Package.query.join(Institution).filter(Institution.organization_id == row.id).count()
+        for row in Organization.query.order_by(Organization.id).all()
+    }
+    summary["report_distribution"] = {
+        row.name: InstitutionReport.query.join(Institution).filter(
+            Institution.organization_id == row.id, InstitutionReport.status == "published").count()
+        for row in Organization.query.order_by(Organization.id).all()
+    }
+    summary["booking_group_distribution"] = {
+        row.name: BookingGroup.query.join(Institution).filter(Institution.organization_id == row.id).count()
+        for row in Organization.query.order_by(Organization.id).all()
+    }
+    return summary

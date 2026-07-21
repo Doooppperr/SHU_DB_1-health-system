@@ -97,16 +97,24 @@ def _backup(database: Path, upload_dir: Path) -> dict:
     upload_archive = database.with_name(
         f"uploads.before-demo-v8-{stamp}-{suffix}.zip"
     )
+    unreadable_files = []
     with zipfile.ZipFile(upload_archive, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         if upload_dir.is_dir():
             for path in sorted(upload_dir.rglob("*")):
                 if path.is_file():
-                    archive.write(path, path.relative_to(upload_dir).as_posix())
+                    try:
+                        archive.write(path, path.relative_to(upload_dir).as_posix())
+                    except PermissionError:
+                        # A prior access-control test may deliberately leave an
+                        # unreadable synthetic file. Record it explicitly; the
+                        # database backup still preserves its storage metadata.
+                        unreadable_files.append(path.relative_to(upload_dir).as_posix())
         archive.writestr("demo-v8-backup.json", json.dumps({
             "database": str(database),
             "database_sha256": _sha256(backup_database),
             "upload_dir": str(upload_dir),
             "created_at": datetime.now().isoformat(),
+            "unreadable_files": unreadable_files,
         }, ensure_ascii=False, indent=2))
     return {
         "database": str(backup_database),
@@ -155,7 +163,12 @@ def _remove_replaced_files(upload_dir: Path, old_keys: set[str], new_keys: set[s
         except ValueError:
             raise RuntimeError(f"refusing to delete storage key outside upload directory: {key}")
         if candidate.is_file():
-            candidate.unlink()
+            try:
+                candidate.unlink()
+            except PermissionError:
+                # Unregistered access-test remnants may retain an intentional
+                # deny ACL. They stay outside the new manifest and cannot be served.
+                continue
 
 
 def _safe_storage_path(root: Path, key: str) -> Path:

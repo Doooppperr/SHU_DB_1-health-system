@@ -10,7 +10,7 @@ from app.demo_v7 import (
 from app.extensions import db
 from app.models import (
     Appointment, BookingGroup, HealthDomain, Institution, InstitutionReport, Organization,
-    NotificationOutbox, Package, PackageVersion, ReportAsset, ReportTextResult,
+    NotificationOutbox, Package, PackageVersion, ReportAccessLog, ReportAsset, ReportTextResult,
     User, WaitlistSubscription,
 )
 
@@ -40,6 +40,23 @@ def test_v8_demo_catalog_and_platform_scenarios_are_visible(app):
         assert Institution.query.count() == 15
         assert Package.query.count() == 25
         assert PackageVersion.query.count() == 26
+        assert {item.name: len(item.branches) for item in Organization.query.all()} == {
+            "澄心健康管理中心": 5,
+            "衡康代谢与慢病管理中心": 4,
+            "云川影像与呼吸体检中心": 3,
+            "安沐女性与家庭健康中心": 2,
+            "仁序职业健康与综合体检中心": 1,
+        }
+        assert {
+            item.name: Package.query.join(Institution).filter(Institution.organization_id == item.id).count()
+            for item in Organization.query.all()
+        } == {
+            "澄心健康管理中心": 8,
+            "衡康代谢与慢病管理中心": 6,
+            "云川影像与呼吸体检中心": 5,
+            "安沐女性与家庭健康中心": 4,
+            "仁序职业健康与综合体检中心": 2,
+        }
         assert all(len(item.images) == 1 for item in Institution.query.all())
         for institution in Institution.query.order_by(Institution.id).limit(3).all():
             expected = EXPECTED_CATALOG[institution.name]
@@ -61,6 +78,12 @@ def test_v8_demo_catalog_and_platform_scenarios_are_visible(app):
         assert NotificationOutbox.query.filter_by(event_type="waitlist_available", status="sent").count() >= 1
         assert ReportTextResult.query.count() >= 5
         assert ReportAsset.query.count() >= 3
+        single = Organization.query.filter_by(name="仁序职业健康与综合体检中心").one()
+        assert len(single.branches) == 1
+        assert ReportAccessLog.query.filter(
+            ReportAccessLog.actor_institution_id.in_([item.id for item in single.branches]),
+            ReportAccessLog.source_institution_id.notin_([item.id for item in single.branches]),
+        ).count() == 0
 
 
 def test_published_demo_results_stay_inside_booking_package_domains(app):

@@ -69,7 +69,7 @@ export function formatDate(value, options = {}) {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(String(value))
     ? new Date(`${value}T00:00:00`)
     : new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
+  if (Number.isNaN(date.getTime())) return "日期待核对";
   return date.toLocaleDateString("zh-CN", {
     year: "numeric",
     month: "long",
@@ -78,9 +78,21 @@ export function formatDate(value, options = {}) {
   });
 }
 
+export function formatBusinessDate(value, { short = false } = {}) {
+  if (!value) return "日期待核对";
+  const text = String(value).trim();
+  const matched = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!matched) return "日期待核对";
+  const date = new Date(Number(matched[1]), Number(matched[2]) - 1, Number(matched[3]));
+  if (date.getFullYear() !== Number(matched[1]) || date.getMonth() !== Number(matched[2]) - 1 || date.getDate() !== Number(matched[3])) return "日期待核对";
+  return date.toLocaleDateString("zh-CN", short
+    ? { month: "short", day: "numeric" }
+    : { year: "numeric", month: "long", day: "numeric" });
+}
+
 export function formatDateTime(value) {
   if (!value) return "—";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
+  if (Number.isNaN(date.getTime())) return "时间待核对";
   return date.toLocaleString("zh-CN", { hour12: false });
 }

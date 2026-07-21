@@ -1,5 +1,6 @@
 import http from "./http";
 import { useAuthStore } from "../stores/auth";
+import { normalizeApiMessage } from "../utils/apiMessages";
 
 
 const AI_API_PREFIX = "/api/ai";
@@ -36,6 +37,10 @@ export function streamAiChat(payload, options = {}) {
 
 export function streamAiAnalysis(payload, options = {}) {
   return streamAiRequest("/analyze/stream", payload, options);
+}
+
+export function streamAiTrendAnalysis(payload, options = {}) {
+  return streamAiRequest("/trends/stream", payload, options);
 }
 
 function eventFromBlock(block) {
@@ -82,7 +87,7 @@ async function errorFromResponse(response) {
     // A proxy may return a plain-text or empty error body.
   }
   const body = details.error && typeof details.error === "object" ? details.error : details;
-  const message = body.message || body.detail || `AI 请求失败（${response.status}）`;
+  const message = normalizeApiMessage(body.message || body.detail, body.code, `AI 请求失败（${response.status}）`);
   return new AiStreamError(message, {
     code: body.code || `HTTP_${response.status}`,
     status: response.status,

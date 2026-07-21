@@ -72,3 +72,17 @@ def test_booking_and_org_dashboard_payloads_are_display_ready(client):
     summary = dashboard.get_json()["summary"]
     assert {"today", "tasks", "recent_package_reviews"} <= set(summary)
     assert {"capacity", "booked", "remaining", "awaiting_arrival", "awaiting_archive"} <= set(summary["today"])
+
+
+def test_health_trends_return_dates_and_explainable_reference_ranges(client):
+    headers = login(client, "test1")
+    domains = client.get("/api/health-domains", headers=headers).get_json()["items"]
+    domain = next(item for item in domains if item["code"] == "basic")
+    response = client.get(f"/api/health-trends/{domain['id']}", headers=headers)
+    assert response.status_code == 200
+    entries = response.get_json()["series_by_indicator"]
+    assert entries
+    for entry in entries:
+        for track in entry["series"]:
+            assert all(len(point["date"]) == 10 and point["date"][4] == "-" for point in track["points"])
+            assert {"kind", "label", "context", "varies"} <= set(track["reference"])

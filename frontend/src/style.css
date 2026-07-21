@@ -3314,8 +3314,43 @@ body {
   font-size: var(--text-base);
 }
 
-/* Care mode uses proportional route scaling; these rules only improve wrapping
-   for content that is inherently variable (tables, names and AI responses). */
+/* Care mode changes readable dimensions directly. It intentionally avoids
+   transform/zoom so responsive layouts and fixed panels keep their geometry. */
+:root[data-care="on"] {
+  --text-xs: 14px;
+  --text-sm: 16px;
+  --text-base: 18px;
+  --text-lg: 21px;
+  --text-xl: 26px;
+  font-size: 18px;
+}
+
+:root[data-care="on"] body {
+  font-size: 18px;
+  line-height: 1.75;
+}
+
+:root[data-care="on"] .el-button,
+:root[data-care="on"] .el-input__wrapper,
+:root[data-care="on"] .el-select__wrapper,
+:root[data-care="on"] .el-date-editor,
+:root[data-care="on"] .el-checkbox {
+  min-height: 48px;
+  font-size: 17px;
+}
+
+:root[data-care="on"] .el-button { padding-inline: 20px; }
+:root[data-care="on"] .el-form-item__label,
+:root[data-care="on"] .el-tag,
+:root[data-care="on"] .el-table,
+:root[data-care="on"] .workspace-nav,
+:root[data-care="on"] .filter-field-label { font-size: 16px; }
+
+:root[data-care="on"] .workspace-page { gap: 24px; }
+:root[data-care="on"] .el-card__body { padding: 24px; }
+:root[data-care="on"] h1 { font-size: clamp(32px, 4vw, 48px); }
+:root[data-care="on"] h2 { font-size: clamp(27px, 3vw, 38px); }
+:root[data-care="on"] h3 { font-size: 22px; }
 :root[data-care="on"] .workspace-brand strong,
 :root[data-care="on"] .workspace-user strong,
 :root[data-care="on"] .record-preview-main strong,

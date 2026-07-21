@@ -4,6 +4,8 @@ import { resolve } from "node:path";
 
 import {
   appointmentMeta,
+  formatBusinessDate,
+  formatDate,
   genderLabel,
   normalizeTimelineEntry,
   packageTypeLabel,
@@ -51,5 +53,19 @@ describe("user platform presentation helpers", () => {
     expect(appointmentMeta("awaiting_report").label).toBe("待出结果");
     expect(genderLabel("female_all")).toBe("女性全龄");
     expect(packageTypeLabel("combined")).toBe("综合组合");
+  });
+
+  it("never renders the browser Invalid Date marker", () => {
+    expect(formatBusinessDate("2026-07-21T08:30:00+08:00", { short: true })).not.toContain("Invalid");
+    expect(formatBusinessDate("not-a-date")).toBe("日期待核对");
+    expect(formatDate("broken-date")).toBe("日期待核对");
+  });
+
+  it("wires timeline tabs to reload and login enter to one form submission", () => {
+    const timeline = readFileSync(resolve(process.cwd(), "src/views/HealthTimelineView.vue"), "utf8");
+    const login = readFileSync(resolve(process.cwd(), "src/views/LoginView.vue"), "utf8");
+    expect(timeline).toMatch(/async function recordTypeChanged\([\s\S]*?await apply\(\)/);
+    expect(login).not.toContain('@keyup.enter="onSubmit"');
+    expect(login).toContain("if (loading.value) return");
   });
 });

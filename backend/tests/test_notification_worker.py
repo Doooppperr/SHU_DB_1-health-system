@@ -102,3 +102,25 @@ def test_email_content_covers_institution_booking_events():
     assert "BG-DEMO-001" in booking_body and "糖脂代谢专项" in booking_body
     assert full_subject == "HealthDoc 预约容量提醒"
     assert "预约名额现已约满" in full_body
+
+
+def test_user_booking_email_is_private_continuous_prose():
+    row = NotificationOutbox(
+        event_type="booking_user_confirmed",
+        idempotency_key="booking-user-copy-test",
+        recipient="shared-test@example.test",
+        payload={
+            "institution": "澄心健康管理中心", "branch": "徐汇综合院区",
+            "address": "斜土路1609号", "appointment_date": "2026-08-08",
+            "package": "都市年度基础体检", "recipient_name": "林晓晨",
+            "is_organizer": True,
+            "participants": [{"name": "林晓晨", "health_id_masked": "HD******01"}],
+            "booking_notice": "检查前一天清淡饮食并空腹到检",
+        },
+    )
+    subject, body = notification_worker._email_content(row)
+    assert subject == "HealthDoc 体检预约成功"
+    assert "林晓晨" in body and "HD******01" in body
+    assert "2026年8月8日" in body and "斜土路1609号" in body
+    assert "检查前一天清淡饮食并空腹到检" in body
+    assert "\n" not in body and "{" not in body

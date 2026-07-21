@@ -161,13 +161,13 @@ def register():
         return {"message": "请输入有效的邮箱地址"}, 400
 
     if len(password) < 6:
-        return {"message": "password must be at least 6 characters"}, 400
+        return {"message": "密码至少需要6个字符", "code": "PASSWORD_TOO_SHORT"}, 400
 
     if not _verify_captcha(captcha_id, captcha_answer):
-        return {"message": "invalid captcha"}, 400
+        return {"message": "验证码不正确，请重新输入", "code": "INVALID_CAPTCHA"}, 400
 
     if User.query.filter_by(username=username).first():
-        return {"message": "username already exists"}, 409
+        return {"message": "该用户名已被使用", "code": "USERNAME_EXISTS"}, 409
 
     invite = None
     expected_invite_hash = None
@@ -177,9 +177,9 @@ def register():
             status="active",
         ).first()
         if invite is None or invite.used_by_user_id is not None:
-            return {"message": "invalid or unavailable invitation code"}, 400
+            return {"message": "邀请码不正确或已失效", "code": "INVITATION_UNAVAILABLE"}, 400
         if invite.institution is None or not invite.institution.is_active:
-            return {"message": "invitation institution is inactive"}, 400
+            return {"message": "该邀请码所属分院已停用", "code": "INSTITUTION_INACTIVE"}, 400
         expected_invite_hash = invite.code_hash
 
     user = User(
@@ -212,7 +212,7 @@ def register():
             )
             if consumed.rowcount != 1:
                 db.session.rollback()
-                return {"message": "invitation code has already been used"}, 409
+                return {"message": "该邀请码已经使用", "code": "INVITATION_USED"}, 409
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
@@ -230,23 +230,23 @@ def login():
     captcha_answer = (payload.get("captcha_answer") or "").strip()
 
     if not username or not password or not captcha_id or not captcha_answer:
-        return {"message": "username, password and captcha are required"}, 400
+        return {"message": "请输入用户名、密码和验证码", "code": "LOGIN_FIELDS_REQUIRED"}, 400
 
     if not _verify_captcha(captcha_id, captcha_answer):
-        return {"message": "invalid captcha"}, 400
+        return {"message": "验证码不正确，请重新输入", "code": "INVALID_CAPTCHA"}, 400
 
     user = User.query.filter_by(username=username).first()
     if user is None or not user.check_password(password):
-        return {"message": "invalid username or password"}, 401
+        return {"message": "用户名或密码不正确", "code": "INVALID_CREDENTIALS"}, 401
     if not user.is_active:
-        return {"message": "account is inactive"}, 403
+        return {"message": "该账号已停用，请联系管理员", "code": "ACCOUNT_INACTIVE"}, 403
     if user.role == "institution_admin" and (
         user.managed_institution is None
         or not user.managed_institution.is_active
         or user.managed_institution.organization is None
         or not user.managed_institution.organization.is_active
     ):
-        return {"message": "institution is inactive"}, 403
+        return {"message": "该账号所属分院已停用", "code": "INSTITUTION_INACTIVE"}, 403
 
     return _build_auth_payload(user, "login success"), 200
 
@@ -257,9 +257,9 @@ def refresh_token():
     user_id = get_jwt_identity()
     user = db.session.get(User, int(user_id))
     if user is None:
-        return {"message": "user not found"}, 404
+        return {"message": "账号不存在或已不可用", "code": "USER_NOT_FOUND"}, 404
     if not user.is_active:
-        return {"message": "account is inactive"}, 403
+        return {"message": "该账号已停用，请联系管理员", "code": "ACCOUNT_INACTIVE"}, 403
 
     access_token = create_access_token(identity=str(user.id), additional_claims={"role": user.role})
     return {"access_token": access_token}, 200
@@ -268,4 +268,4 @@ def refresh_token():
 @auth_bp.post("/logout")
 @jwt_required()
 def logout():
-    return {"message": "logout success"}, 200
+    return {"message": "已安全退出登录"}, 200

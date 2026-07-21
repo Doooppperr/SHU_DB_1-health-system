@@ -84,6 +84,16 @@ def test_booking_group_is_atomic_and_proxy_booking_is_separate(app, client):
     with app.app_context():
         rows = Appointment.query.filter_by(booking_group_id=item["id"]).all()
         assert len(rows) == 2 and {row.user_id for row in rows} == {ids[0], ids[1]}
+        user_mail = NotificationOutbox.query.filter_by(event_type="booking_user_confirmed").all()
+        assert len(user_mail) == 2
+        assert len({row.idempotency_key for row in user_mail}) == 2
+    duplicate = client.post("/api/booking-groups", headers=booker, json={
+        "institution_id": ids[2], "package_id": ids[3], "appointment_date": day.isoformat(),
+        "participant_user_ids": [ids[0]], "notice_confirmed": True,
+    })
+    assert duplicate.status_code == 409
+    assert duplicate.get_json()["code"] == "APPOINTMENT_DATE_CONFLICT"
+    assert duplicate.get_json()["appointment_date"] == day.isoformat()
     # Proxy booking does not imply permission to read the other subject's health data.
     with app.app_context():
         relation = FriendRelation.query.filter_by(user_id=ids[0], friend_user_id=ids[1]).first()

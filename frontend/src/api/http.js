@@ -1,5 +1,6 @@
 import axios from "axios";
 import { useAuthStore } from "../stores/auth";
+import { normalizeApiMessage } from "../utils/apiMessages";
 
 const http = axios.create({
   baseURL: "/api",
@@ -23,13 +24,19 @@ http.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
     const authStore = useAuthStore();
+    if (error.response?.data && typeof error.response.data === "object") {
+      const payload = error.response.data.error && typeof error.response.data.error === "object"
+        ? error.response.data.error : error.response.data;
+      if (payload.message) payload.message = normalizeApiMessage(payload.message, payload.code);
+    }
 
     if (
       error.response?.status === 401 &&
+      originalRequest &&
       !originalRequest._retry &&
-      !originalRequest.url.includes("/auth/login") &&
-      !originalRequest.url.includes("/auth/register") &&
-      !originalRequest.url.includes("/auth/refresh") &&
+      !originalRequest.url?.includes("/auth/login") &&
+      !originalRequest.url?.includes("/auth/register") &&
+      !originalRequest.url?.includes("/auth/refresh") &&
       authStore.refreshToken
     ) {
       originalRequest._retry = true;

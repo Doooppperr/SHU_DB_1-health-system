@@ -46,6 +46,31 @@ def _email_content(row):
             f"共{party_size}位受检者。请登录康康健健 HealthDoc 机构工作台查看预约详情，"
             "并按计划完成接待准备。"
         )
+    elif row.event_type == "booking_user_confirmed":
+        subject = "HealthDoc 体检预约成功"
+        address = str(payload.get("address") or "请在平台查看详细地址").strip()
+        notice = str(payload.get("booking_notice") or "请按机构要求提前做好体检准备").strip().rstrip("。；;，,")
+        recipient_name = str(payload.get("recipient_name") or "用户").strip()
+        participant = payload.get("participant") if isinstance(payload.get("participant"), dict) else None
+        participants = payload.get("participants") if isinstance(payload.get("participants"), list) else []
+        if payload.get("is_organizer") and participants:
+            people = "、".join(
+                f"{str(item.get('name') or '受检者')}（健康身份码{str(item.get('health_id_masked') or '未设置')}）"
+                for item in participants if isinstance(item, dict)
+            )
+            identity_text = f"本次受检者为{people}"
+        elif participant:
+            identity_text = (
+                f"本次受检者为{participant.get('name') or recipient_name}"
+                f"（健康身份码{participant.get('health_id_masked') or '未设置'}）"
+            )
+        else:
+            identity_text = "本次预约的受检者信息可在平台中查看"
+        body = (
+            f"{recipient_name}，您好，您的体检预约已经成功。预约服务为{payload.get('package') or '体检服务'}，"
+            f"体检日期为{appointment_date}，地点为{institution_label}，地址是{address}，{identity_text}。"
+            f"检查前请注意：{notice}。请登录康康健健 HealthDoc 平台查看或管理本次预约。"
+        )
     elif row.event_type == "appointment_date_full":
         subject = "HealthDoc 预约容量提醒"
         body = (
@@ -67,7 +92,7 @@ def _email_content(row):
         body = f"您好，{detail}请登录康康健健 HealthDoc 平台查看详情。"
 
     footer = "本邮件由康康健健 HealthDoc 自动发送，请勿直接回复。"
-    return subject, f"{body}\n\n{footer}"
+    return subject, f"{body}{footer}"
 
 
 def _send(app, row):

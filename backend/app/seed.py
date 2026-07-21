@@ -121,7 +121,7 @@ INDICATOR_DICT_SEEDS = [
     {
         "category": "一般检查", "code": "TEMP", "name": "体温",
         "aliases": ["体温", "TEMP"], "unit": "℃",
-        "reference_low": Decimal("36.0"), "reference_high": Decimal("37.3"),
+        "reference_low": Decimal("36.1"), "reference_high": Decimal("37.2"),
         "clinical_significance": "体温异常可提示感染或其他生理变化。", "value_type": "numeric",
         "allow_self_measurement": True,
     },

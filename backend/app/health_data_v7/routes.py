@@ -1,6 +1,7 @@
 from collections import defaultdict
 from datetime import date, datetime, time, timezone
 from pathlib import Path
+import re
 from zoneinfo import ZoneInfo
 
 from flask import current_app, g, request, send_file
@@ -8,13 +9,21 @@ from flask import current_app, g, request, send_file
 from app.extensions import db
 from app.health_data_v7 import health_data_v7_bp
 from app.models import (
-    FriendRelation, HealthDomain, IndicatorDomainLink, InstitutionReport,
+    FriendRelation, HealthDomain, IndicatorDict, IndicatorDomainLink, InstitutionReport,
     ReportAsset, ReportIndicator, SelfMeasurement, User,
 )
 from app.services.permissions import ROLE_ADMIN, ROLE_INSTITUTION_ADMIN, ROLE_USER, roles_required
 
 
 BUSINESS_TZ = ZoneInfo("Asia/Shanghai")
+
+REFERENCE_SOURCES = {
+    "HR": {"context": "成人安静状态", "source_title": "American Heart Association 成人静息心率说明", "source_url": "https://www.heart.org/en/health-topics/high-blood-pressure/the-facts-about-high-blood-pressure/all-about-heart-rate-pulse"},
+    "TEMP": {"context": "成人一般体温；测量部位、活动和时间会影响结果", "source_title": "MedlinePlus Body temperature norms", "source_url": "https://medlineplus.gov/ency/article/001982.htm"},
+    "SPO2": {"context": "多数健康人；海拔、循环和设备条件会影响读数", "source_title": "FDA Pulse Oximeter Basics", "source_url": "https://www.fda.gov/consumers/consumer-updates/pulse-oximeters-and-oxygen-concentrators-what-know-about-home-oxygen-therapy"},
+    "FBG": {"context": "成人空腹静脉血浆葡萄糖的一般参考", "source_title": "国家卫健委《成人糖尿病食养指南（2023年版）》", "source_url": "https://www.nhc.gov.cn/cms-search/downFiles/4fcbecd2c18e46baaf291bf46c2b79cd.pdf"},
+    "BMI": {"context": "中国成人（18岁及以上）", "source_title": "国家卫健委《体重管理指导原则（2024年版）》", "source_url": "https://www.nhc.gov.cn/ylyjs/zcwj/202412/75cb79c171c94def9e768193e65484f7/files/1736390749000_59785.pdf"},
+}
 
 
 def _measurement_day(value):
@@ -28,6 +37,48 @@ def _day_bounds(day):
         datetime.combine(day, time.min, tzinfo=BUSINESS_TZ).astimezone(timezone.utc),
         datetime.combine(day, time.max, tzinfo=BUSINESS_TZ).astimezone(timezone.utc),
     )
+
+
+def _numeric_reference(value):
+    numbers = re.findall(r"-?\d+(?:\.\d+)?", str(value or ""))
+    if len(numbers) < 2:
+        return None
+    low, high = float(numbers[0]), float(numbers[1])
+    return (low, high) if low <= high else None
+
+
+def _track_reference(owner, definition, source_key, points):
+    if source_key.startswith("institution:"):
+        ranges = {_numeric_reference(point.get("reference")) for point in points if point.get("reference")}
+        ranges.discard(None)
+        if len(ranges) == 1:
+            low, high = next(iter(ranges))
+            return {"kind": "report", "low": low, "high": high, "label": "机构报告参考范围",
+                    "context": "以该机构报告提供的参考范围为准", "varies": False}
+        if len(ranges) > 1:
+            return {"kind": "report", "low": None, "high": None, "label": "各次报告参考范围不同",
+                    "context": "请在数据点提示中查看每次报告的参考范围", "varies": True}
+        return {"kind": "none", "low": None, "high": None, "label": "报告未提供可绘制的参考范围",
+                "context": "请以原始报告和机构说明为准", "varies": False}
+    if definition.code == "WEIGHT":
+        height = IndicatorDict.query.filter_by(code="HEIGHT").first()
+        latest = None if height is None else SelfMeasurement.query.filter_by(
+            user_id=owner.id, indicator_dict_id=height.id).order_by(SelfMeasurement.measured_at.desc()).first()
+        age = None
+        if owner.birth_date:
+            today = date.today(); age = today.year - owner.birth_date.year - ((today.month, today.day) < (owner.birth_date.month, owner.birth_date.day))
+        if latest and age is not None and age >= 18 and float(latest.value) > 0:
+            metres = float(latest.value) / 100
+            return {"kind": "derived", "low": round(18.5 * metres * metres, 1),
+                    "high": round(23.9 * metres * metres, 1), "label": "按成人 BMI 换算的参考体重",
+                    "context": f"根据最近身高 {float(latest.value):g} cm 换算，仅作健康管理参考", "varies": False,
+                    **REFERENCE_SOURCES["BMI"]}
+    meta = REFERENCE_SOURCES.get(definition.code)
+    if meta and definition.reference_low is not None and definition.reference_high is not None:
+        return {"kind": "guideline", "low": float(definition.reference_low), "high": float(definition.reference_high),
+                "label": "一般参考范围", "varies": False, **meta}
+    return {"kind": "none", "low": None, "high": None, "label": "暂无统一参考范围",
+            "context": "该指标需结合个人情况或原始报告解释", "varies": False}
 
 
 def _owner():
@@ -226,6 +277,7 @@ def health_trends(domain_id):
             for key, points in sources.items():
                 previous = points[-2]["value"] if len(points) > 1 else None
                 series.append({"source_key": key, "source": points[-1]["source"], "points": points,
+                               "reference": _track_reference(owner, definition, key, points),
                                "summary": {"latest": points[-1]["value"],
                                            "change": points[-1]["value"] - previous if previous is not None else None,
                                            "count": len(points)}})

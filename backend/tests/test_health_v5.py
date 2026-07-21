@@ -4,7 +4,7 @@ from io import BytesIO
 from app.extensions import db
 from app.health.routes import as_calendar_date
 from app.ai.rag import RetrievalResult
-from app.models import IndicatorDict, Institution, InstitutionReport, SelfMeasurement, User
+from app.models import HealthDomain, IndicatorDict, Institution, InstitutionReport, SelfMeasurement, User
 from app.services.record_files import report_file_path
 
 
@@ -186,6 +186,21 @@ def test_ai_requires_per_request_consent_and_excludes_identity(app, client):
         user = User.query.filter_by(username="test1").first()
         assert user.health_id not in body
         assert user.real_name not in body
+
+
+def test_ai_trend_analysis_requires_page_consent_and_uses_server_data(app, client):
+    headers = login(client, "test1")
+    with app.app_context():
+        domain_id = HealthDomain.query.filter_by(code="basic").one().id
+    denied = client.post("/api/ai/trends/stream", headers=headers, json={"domain_id": domain_id})
+    assert denied.status_code == 400
+    assert denied.get_json()["error"]["code"] == "trend_consent_required"
+    allowed = client.post("/api/ai/trends/stream", headers=headers,
+                          json={"domain_id": domain_id, "consent": True}, buffered=True)
+    assert allowed.status_code == 200
+    body = allowed.get_data(as_text=True)
+    assert '"mode":"trend_analysis"' in body
+    assert 'event: done' in body
 
 
 def test_org_ocr_mock_creates_reviewable_draft_and_lock_deletes_file(app, client):
