@@ -1,5 +1,9 @@
 from datetime import date, timedelta
 
+from sqlalchemy import event
+
+from app.extensions import db
+
 
 PASSWORD = "Shuhealthdoc！"
 
@@ -74,14 +78,48 @@ def test_booking_and_org_dashboard_payloads_are_display_ready(client):
     assert {"capacity", "booked", "remaining", "awaiting_arrival", "awaiting_archive"} <= set(summary["today"])
 
 
-def test_health_trends_return_dates_and_explainable_reference_ranges(client):
+def test_health_trends_return_dates_and_explainable_reference_ranges(app, client):
     headers = login(client, "test1")
     domains = client.get("/api/health-domains", headers=headers).get_json()["items"]
     domain = next(item for item in domains if item["code"] == "basic")
-    response = client.get(f"/api/health-trends/{domain['id']}", headers=headers)
+    statements = []
+    with app.app_context():
+        engine = db.engine
+
+    def capture(_connection, _cursor, statement, _parameters, _context, _many):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        response = client.get(f"/api/health-trends/{domain['id']}", headers=headers)
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
     assert response.status_code == 200
     entries = response.get_json()["series_by_indicator"]
     assert entries
     for entry in entries:
         assert all(len(point["date"]) == 10 and point["date"][4] == "-" for point in entry["points"])
         assert {"kind", "label", "context", "varies"} <= set(entry["reference"])
+    distinct_queries = [statement.lower() for statement in statements if "select distinct" in statement.lower()]
+    assert distinct_queries
+    assert all("ocr_diagnostics" not in statement for statement in distinct_queries)
+
+
+def test_authorized_friend_is_used_by_health_data_timeline_and_trends(client):
+    headers = login(client, "test1")
+    relations = client.get("/api/friends", headers=headers).get_json()["outgoing"]
+    relation = next(item for item in relations if item["auth_status"])
+    friend_id = relation["friend_user"]["id"]
+
+    health_data = client.get(f"/api/health-data?owner_id={friend_id}", headers=headers)
+    assert health_data.status_code == 200
+    assert health_data.get_json()["owner"]["id"] == friend_id
+
+    timeline = client.get(f"/api/health/timeline?owner_id={friend_id}", headers=headers)
+    assert timeline.status_code == 200
+    assert timeline.get_json()["owner"]["id"] == friend_id
+
+    domain_id = client.get("/api/health-domains", headers=headers).get_json()["items"][0]["id"]
+    trends = client.get(f"/api/health-trends/{domain_id}?owner_id={friend_id}", headers=headers)
+    assert trends.status_code == 200
+    assert trends.get_json()["owner"]["id"] == friend_id

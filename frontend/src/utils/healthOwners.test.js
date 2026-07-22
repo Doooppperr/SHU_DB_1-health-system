@@ -4,6 +4,7 @@ import {
   SELF_OWNER_VALUE,
   buildHealthOwnerOptions,
   ownerRequestParams,
+  withOwnerRequestParams,
 } from "./healthOwners";
 
 describe("health owner options", () => {
@@ -41,5 +42,7 @@ describe("health owner options", () => {
   it("builds an owner query only for a selected friend", () => {
     expect(ownerRequestParams(SELF_OWNER_VALUE)).toEqual({});
     expect(ownerRequestParams("12")).toEqual({ owner_id: 12 });
+    expect(withOwnerRequestParams({ owner_id: "self", page: 2 }, "12")).toEqual({ page: 2, owner_id: 12 });
+    expect(withOwnerRequestParams({ owner_id: "12", page: 2 }, SELF_OWNER_VALUE)).toEqual({ page: 2 });
   });
 });

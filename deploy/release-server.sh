@@ -234,6 +234,10 @@ if [[ -n "$mail_settings" ]]; then
     rm -f "$mail_settings"
 fi
 
+# This helper targets the production host. A demo redirect silently sends every
+# user's password code to one tester mailbox, so production releases clear it.
+upsert_env NOTIFICATION_EMAIL_REDIRECT ""
+
 # Every production release takes a full cold backup before any additive
 # migration. The ordinary path never imports a local/demo database.
 if [[ -z "$database_backup" ]]; then

@@ -13,7 +13,7 @@
       <div class="health-data-filter-grid">
         <label class="filter-field">
           <span class="filter-field-label">查看谁的资料</span>
-          <el-select v-model="filters.owner_id">
+          <el-select v-model="filters.owner_id" @change="filters.page = 1">
             <el-option v-for="item in owners" :key="String(item.value)" :label="item.label" :value="item.value" />
           </el-select>
         </label>
@@ -33,7 +33,7 @@
             <el-option v-for="item in domains" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </label>
-        <div class="filter-actions"><el-button type="primary" @click="applyFilters">筛选资料</el-button></div>
+        <div class="filter-actions"><el-button type="primary" @click="applyFilters(true)">筛选资料</el-button></div>
       </div>
     </el-card>
 
@@ -83,7 +83,7 @@
         :page-size="pagination.page_size"
         :total="pagination.total"
         layout="prev, pager, next, total"
-        @current-change="applyFilters"
+        @current-change="applyFilters(false)"
       />
     </div>
   </div>
@@ -96,7 +96,7 @@ import { fetchFriends } from "../api/friends";
 import { fetchHealthData, fetchHealthDomains } from "../api/health";
 import { fetchInstitutions } from "../api/institutions";
 import { useAuthStore } from "../stores/auth";
-import { buildHealthOwnerOptions, ownerRequestParams, SELF_OWNER_VALUE } from "../utils/healthOwners";
+import { buildHealthOwnerOptions, ownerRequestParams, SELF_OWNER_VALUE, withOwnerRequestParams } from "../utils/healthOwners";
 import { sourceLabel } from "../utils/userPlatform";
 
 const route = useRoute();
@@ -152,13 +152,11 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const params = cleanParams({
+    const params = cleanParams(withOwnerRequestParams({
       ...filters,
-      ...ownerRequestParams(filters.owner_id),
-      owner_id: undefined,
       start_date: dateRange.value?.[0],
       end_date: dateRange.value?.[1],
-    });
+    }, filters.owner_id));
     const { data } = await fetchHealthData(params);
     items.value = data.items || [];
     Object.assign(pagination, data.pagination || {});
@@ -169,7 +167,8 @@ async function load() {
   }
 }
 
-async function applyFilters() {
+async function applyFilters(resetPage = false) {
+  if (resetPage) filters.page = 1;
   const query = cleanParams({
     ...filters,
     owner_id: filters.owner_id === SELF_OWNER_VALUE ? undefined : filters.owner_id,

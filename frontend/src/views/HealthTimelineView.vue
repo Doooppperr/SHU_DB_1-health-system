@@ -14,7 +14,7 @@
       <div class="timeline-filter-grid">
         <label class="filter-field">
           <span class="filter-field-label">查看谁的记录</span>
-          <el-select v-model="filters.owner_id">
+          <el-select v-model="filters.owner_id" @change="filters.page = 1">
             <el-option v-for="owner in owners" :key="String(owner.value)" :label="owner.label" :value="owner.value" />
           </el-select>
         </label>
@@ -34,7 +34,7 @@
             <el-option v-for="(meta, key) in APPOINTMENT_STATUS" :key="key" :label="meta.label" :value="key" />
           </el-select>
         </label>
-        <div class="filter-actions"><el-button type="primary" @click="apply">筛选记录</el-button></div>
+        <div class="filter-actions"><el-button type="primary" @click="apply(true)">筛选记录</el-button></div>
       </div>
     </el-card>
 
@@ -102,7 +102,7 @@
         :page-size="pagination.page_size"
         :total="pagination.total"
         layout="prev, pager, next, total"
-        @current-change="apply"
+        @current-change="apply(false)"
       />
     </div>
   </div>
@@ -115,7 +115,7 @@ import { fetchFriends } from "../api/friends";
 import { fetchTimeline } from "../api/health";
 import { fetchInstitutions } from "../api/institutions";
 import { useAuthStore } from "../stores/auth";
-import { buildHealthOwnerOptions, ownerRequestParams, SELF_OWNER_VALUE } from "../utils/healthOwners";
+import { buildHealthOwnerOptions, ownerRequestParams, SELF_OWNER_VALUE, withOwnerRequestParams } from "../utils/healthOwners";
 import {
   APPOINTMENT_STATUS,
   appointmentMeta,
@@ -188,8 +188,7 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const params = cleanParams({
-      ...ownerRequestParams(filters.owner_id),
+    const params = cleanParams(withOwnerRequestParams({
       start_date: dateRange.value?.[0],
       end_date: dateRange.value?.[1],
       page: filters.page,
@@ -197,7 +196,7 @@ async function load() {
       record_type: filters.record_type,
       institution_id: filters.record_type === "self" ? null : filters.institution_id,
       status: filters.record_type === "self" ? null : filters.status,
-    });
+    }, filters.owner_id));
     const { data } = await fetchTimeline(params);
     items.value = (data.items || []).map(normalizeTimelineEntry);
     Object.assign(pagination, data.pagination || {});
@@ -208,7 +207,8 @@ async function load() {
   }
 }
 
-async function apply() {
+async function apply(resetPage = false) {
+  if (resetPage) filters.page = 1;
   const query = cleanParams({
     ...filters,
     owner_id: filters.owner_id === SELF_OWNER_VALUE ? undefined : filters.owner_id,

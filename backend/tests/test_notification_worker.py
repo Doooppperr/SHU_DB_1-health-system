@@ -124,3 +124,51 @@ def test_user_booking_email_is_private_continuous_prose():
     assert "2026年8月8日" in body and "斜土路1609号" in body
     assert "检查前一天清淡饮食并空腹到检" in body
     assert "\n" not in body and "{" not in body
+
+
+def test_password_email_uses_bound_recipient_when_production_redirect_is_empty(app, monkeypatch):
+    sent_messages = []
+
+    class FakeSmtp:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def starttls(self):
+            return None
+
+        def login(self, _username, _password):
+            return None
+
+        def send_message(self, message):
+            sent_messages.append(message)
+            return {}
+
+    monkeypatch.setattr(notification_worker.smtplib, "SMTP", FakeSmtp)
+    row = NotificationOutbox(
+        id=99,
+        event_type="password_verification_code",
+        idempotency_key="password-mail-recipient-test",
+        recipient="bound-user@example.test",
+        payload={"username": "测试用户", "purpose": "reset", "verification_code": "123456", "expires_minutes": 10},
+    )
+    with app.app_context():
+        app.config.update(
+            NOTIFICATION_EMAIL_DRY_RUN=False,
+            NOTIFICATION_EMAIL_REDIRECT="",
+            SMTP_HOST="smtp.example.test",
+            SMTP_PORT=587,
+            SMTP_USE_TLS=True,
+            SMTP_USERNAME="sender",
+            SMTP_PASSWORD="secret",
+            SMTP_FROM="sender@example.test",
+        )
+        notification_worker._send(app, row)
+
+    assert sent_messages[0]["To"] == "bound-user@example.test"
+    assert "123456" in sent_messages[0].get_content()

@@ -59,11 +59,11 @@ def requested_owner():
     if raw in {None, ""}:
         return g.current_user, None
     try: owner_id = int(raw)
-    except (TypeError, ValueError): return None, ({"message": "owner_id must be an integer"}, 400)
+    except (TypeError, ValueError): return None, ({"message": "成员标识不正确"}, 400)
     if owner_id == g.current_user.id: return g.current_user, None
     relation = FriendRelation.query.filter_by(user_id=g.current_user.id, friend_user_id=owner_id, auth_status=True).first()
     owner = db.session.get(User, owner_id) if relation else None
-    if owner is None or owner.role != "user": return None, ({"message": "friend authorization required"}, 403)
+    if owner is None or owner.role != "user": return None, ({"message": "尚未获得该亲友的健康资料授权"}, 403)
     return owner, None
 
 
@@ -74,9 +74,9 @@ def parse_range():
         start_date = date.fromisoformat(start) if start else None
         end_date = date.fromisoformat(end) if end else None
     except ValueError:
-        return None, None, ({"message": "date range must use YYYY-MM-DD"}, 400)
+        return None, None, ({"message": "日期范围格式不正确"}, 400)
     if start_date and end_date and start_date > end_date:
-        return None, None, ({"message": "start_date must not exceed end_date"}, 400)
+        return None, None, ({"message": "开始日期不能晚于结束日期"}, 400)
     return start_date, end_date, None
 
 

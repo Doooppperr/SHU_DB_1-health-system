@@ -32,3 +32,11 @@ export function ownerRequestParams(ownerValue) {
   }
   return { owner_id: Number(ownerValue) };
 }
+
+export function withOwnerRequestParams(params = {}, ownerValue = SELF_OWNER_VALUE) {
+  const result = { ...params };
+  // 页面状态中的 owner_id 是“self”或字符串成员编号，不能直接发给接口。
+  // 始终先移除它，再由唯一的转换入口写入真正的数值 owner_id。
+  delete result.owner_id;
+  return { ...result, ...ownerRequestParams(ownerValue) };
+}

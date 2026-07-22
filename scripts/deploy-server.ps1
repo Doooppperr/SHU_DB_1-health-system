@@ -168,6 +168,9 @@ finally:
         if ($mailValues["NOTIFICATION_EMAIL_DRY_RUN"] -ne "0") {
             throw "NOTIFICATION_EMAIL_DRY_RUN must be 0 before server mail sync."
         }
+        if (-not [string]::IsNullOrWhiteSpace($mailValues["NOTIFICATION_EMAIL_REDIRECT"])) {
+            throw "NOTIFICATION_EMAIL_REDIRECT must be empty for a production mail sync."
+        }
         $mailLines = foreach ($key in $allowedMailKeys) {
             if ($mailValues.ContainsKey($key)) { "$key=$($mailValues[$key])" }
         }

@@ -9,7 +9,7 @@ from flask import current_app, g, request, send_file
 from app.extensions import db
 from app.health_data_v7 import health_data_v7_bp
 from app.models import (
-    FriendRelation, HealthDomain, IndicatorDict, IndicatorDomainLink, InstitutionReport,
+    FriendRelation, HealthDomain, IndicatorDict, IndicatorDomainLink, Institution, InstitutionReport,
     ReportAsset, ReportIndicator, SelfMeasurement, User,
 )
 from app.services.permissions import ROLE_ADMIN, ROLE_INSTITUTION_ADMIN, ROLE_USER, roles_required
@@ -86,11 +86,11 @@ def _owner():
     raw = request.args.get("owner_id")
     if raw in {None, ""}: return g.current_user, None
     try: owner_id = int(raw)
-    except (TypeError, ValueError): return None, ({"message": "owner_id must be an integer"}, 400)
+    except (TypeError, ValueError): return None, ({"message": "成员标识不正确"}, 400)
     if owner_id == g.current_user.id: return g.current_user, None
     relation = FriendRelation.query.filter_by(user_id=g.current_user.id, friend_user_id=owner_id, auth_status=True).first()
     owner = db.session.get(User, owner_id) if relation else None
-    if not owner or owner.role != "user": return None, ({"message": "friend authorization required"}, 403)
+    if not owner or owner.role != "user": return None, ({"message": "尚未获得该亲友的健康资料授权"}, 403)
     return owner, None
 
 
@@ -99,8 +99,8 @@ def _date_range():
         start = date.fromisoformat(request.args["start_date"]) if request.args.get("start_date") else None
         end = date.fromisoformat(request.args["end_date"]) if request.args.get("end_date") else None
     except ValueError:
-        return None, None, ({"message": "date range must use YYYY-MM-DD"}, 400)
-    if start and end and start > end: return None, None, ({"message": "start_date must not exceed end_date"}, 400)
+        return None, None, ({"message": "日期范围格式不正确"}, 400)
+    if start and end and start > end: return None, None, ({"message": "开始日期不能晚于结束日期"}, 400)
     return start, end, None
 
 
@@ -213,7 +213,7 @@ def health_data_detail(health_data_id):
     owner, error = _owner()
     if error: return error
     item = _detail_for(owner, health_data_id)
-    return ({"item": item, "owner": owner.friend_identity_dict()}, 200) if item else ({"message": "health data not found"}, 404)
+    return ({"item": item, "owner": owner.friend_identity_dict()}, 200) if item else ({"message": "没有找到该体检数据"}, 404)
 
 
 @health_data_v7_bp.get("/health-data/<health_data_id>/assets/<int:asset_id>/content")
@@ -222,13 +222,13 @@ def asset_content(health_data_id, asset_id):
     owner, error = _owner()
     if error: return error
     kind, report_id = parse_key(health_data_id)
-    if kind != "institution": return {"message": "asset not found"}, 404
+    if kind != "institution": return {"message": "没有找到该检查附件"}, 404
     asset = db.session.query(ReportAsset).join(InstitutionReport).filter(
         ReportAsset.id == asset_id, ReportAsset.report_id == report_id,
         InstitutionReport.matched_user_id == owner.id, InstitutionReport.status == "published").first()
-    if not asset: return {"message": "asset not found"}, 404
+    if not asset: return {"message": "没有找到该检查附件"}, 404
     path = Path(current_app.config["UPLOAD_DIR"]) / asset.storage_key
-    if not path.is_file(): return {"message": "asset content unavailable"}, 404
+    if not path.is_file(): return {"message": "检查附件文件暂时不可用"}, 404
     return send_file(path, mimetype=asset.mime_type, download_name=asset.title, conditional=True)
 
 
@@ -247,17 +247,21 @@ def health_trends(domain_id):
     institution_id = request.args.get("institution_id", type=int)
     items = []
     available_institutions = {}
-    available_query = db.session.query(InstitutionReport).join(ReportIndicator).filter(
+    # Only select comparable scalar columns. Selecting the complete report with
+    # DISTINCT also selects its JSON diagnostics column, which openGauss cannot compare.
+    available_query = db.session.query(Institution.id, Institution.name, Institution.branch_name).join(
+        InstitutionReport, InstitutionReport.institution_id == Institution.id
+    ).join(ReportIndicator, ReportIndicator.report_id == InstitutionReport.id).filter(
         InstitutionReport.matched_user_id == owner.id,
         InstitutionReport.status == "published",
         ReportIndicator.display_domain_id == domain.id,
     )
     if start: available_query = available_query.filter(InstitutionReport.exam_date >= start)
     if end: available_query = available_query.filter(InstitutionReport.exam_date <= end)
-    for report in available_query.distinct().all():
-        available_institutions[report.institution_id] = {
-            "type": "institution", "id": report.institution_id,
-            "name": report.institution.name, "branch_name": report.institution.branch_name,
+    for institution_id, institution_name, branch_name in available_query.distinct().all():
+        available_institutions[institution_id] = {
+            "type": "institution", "id": institution_id,
+            "name": institution_name, "branch_name": branch_name,
         }
     links = IndicatorDomainLink.query.filter_by(health_domain_id=domain.id).order_by(
         IndicatorDomainLink.sort_order, IndicatorDomainLink.indicator_dict_id).all()

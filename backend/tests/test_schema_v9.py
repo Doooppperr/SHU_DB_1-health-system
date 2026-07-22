@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from app.extensions import db
 from app.models import Comment, IndicatorDict, NotificationOutbox, User
+from scripts import notification_worker
 
 
 PASSWORD = "Shuhealthdoc！"
@@ -14,12 +15,21 @@ def login(client, username="test1", password=PASSWORD):
     return data, {"Authorization": f"Bearer {data['access_token']}"}
 
 
-def test_active_password_change_requires_current_password_and_revokes_old_tokens(app, client):
+def test_active_password_change_requires_current_password_and_revokes_old_tokens(app, client, monkeypatch):
     auth, headers = login(client)
     sent = client.post("/api/auth/password-change/code", headers=headers)
     assert sent.status_code == 200
     challenge = sent.get_json()
     assert challenge["verification_code"].isdigit()
+    delivered_to = []
+    monkeypatch.setattr(
+        notification_worker,
+        "_send",
+        lambda _app, row: delivered_to.append(row.recipient) or f"mock-{row.id}",
+    )
+    with app.app_context():
+        assert notification_worker.run_batch(app) == (1, 1)
+        assert delivered_to == [User.query.filter_by(username="test1").one().email]
 
     wrong = client.post("/api/auth/password-change/confirm", headers=headers, json={
         "challenge_id": challenge["challenge_id"],

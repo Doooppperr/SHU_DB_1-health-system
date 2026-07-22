@@ -13,7 +13,7 @@
       <div class="trend-filter-grid-platform">
         <label class="filter-field">
           <span class="filter-field-label">查看谁的趋势</span>
-          <el-select v-model="filters.owner_id">
+          <el-select v-model="filters.owner_id" @change="filters.source = 'all'">
             <el-option v-for="owner in owners" :key="String(owner.value)" :label="owner.label" :value="owner.value" />
           </el-select>
         </label>
@@ -104,7 +104,7 @@ import { streamAiTrendAnalysis } from "../api/ai";
 import { fetchHealthDomains, fetchHealthTrends } from "../api/health";
 import HealthTrendChart from "../components/HealthTrendChart.vue";
 import { useAuthStore } from "../stores/auth";
-import { buildHealthOwnerOptions, ownerRequestParams, SELF_OWNER_VALUE } from "../utils/healthOwners";
+import { buildHealthOwnerOptions, ownerRequestParams, SELF_OWNER_VALUE, withOwnerRequestParams } from "../utils/healthOwners";
 
 const route = useRoute();
 const router = useRouter();
@@ -176,16 +176,20 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const params = cleanParams({
-      ...ownerRequestParams(filters.owner_id),
+    const params = cleanParams(withOwnerRequestParams({
       source_type: filters.source.startsWith("institution") ? "institution" : filters.source,
       institution_id: filters.source.startsWith("institution:") ? Number(filters.source.split(":")[1]) : undefined,
       start_date: dateRange.value?.[0],
       end_date: dateRange.value?.[1],
-    });
+    }, filters.owner_id));
     const { data } = await fetchHealthTrends(filters.domain_id, params);
     series.value = data.series_by_indicator || [];
     sourceOptions.value = data.source_options || sourceOptions.value;
+    if (!sourceOptions.value.some((item) => item.value === filters.source)) {
+      filters.source = "all";
+      await load();
+      return;
+    }
     if (trendConsent.value) scheduleTrendAnalysis();
   } catch (fetchError) {
     error.value = fetchError?.response?.data?.message || "健康趋势暂时没有加载成功，请稍后重试";
@@ -195,10 +199,10 @@ async function load() {
 }
 
 function analysisPayload() {
-  return cleanParams({ ...ownerRequestParams(filters.owner_id), domain_id: filters.domain_id,
+  return cleanParams(withOwnerRequestParams({ domain_id: filters.domain_id,
     source_type: filters.source.startsWith("institution") ? "institution" : filters.source,
     institution_id: filters.source.startsWith("institution:") ? Number(filters.source.split(":")[1]) : undefined,
-    start_date: dateRange.value?.[0], end_date: dateRange.value?.[1], consent: true });
+    start_date: dateRange.value?.[0], end_date: dateRange.value?.[1], consent: true }, filters.owner_id));
 }
 
 function scheduleTrendAnalysis() {
